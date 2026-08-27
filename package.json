@@ -1,16 +1,16 @@
 {
   "name": "ki-excel-tool",
   "version": "1.0.0",
-  "description": "Webinterface mit KI-Anbindung zum Lesen/Bearbeiten einer Excel-Datei",
-  "main": "server.js",
+  "description": "Telegram-Bot mit austauschbarer KI-Anbindung, verwaltet eine Materialliste in Excel",
+  "main": "bot.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node bot.js",
     "setup-example": "node create-example.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.0",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
-    "express": "^4.19.2"
+    "mammoth": "^1.12.1",
+    "node-telegram-bot-api": "^0.66.0"
   }
 }

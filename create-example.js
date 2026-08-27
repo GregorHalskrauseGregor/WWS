@@ -3,20 +3,15 @@ const path = require('path');
 
 async function main() {
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet('Beispiel');
+  const sheet = workbook.addWorksheet('Material');
 
-  sheet.getCell('A1').value = 'Bezeichnung';
-  sheet.getCell('B1').value = 'Wert';
+  sheet.getRow(1).values = ['Kategorie', 'Bezeichnung', 'Menge Neu', 'Menge Gebraucht', 'Menge Verschmutzt', 'Einheit'];
+  sheet.addRow(['Armaturen & Ventile', 'Kugelhahn DN20', 5, 2, 1, 'Stück']);
+  sheet.addRow(['Rohre & Leitungen', 'Kupferrohr 22mm', 12, 0, 0, 'Meter']);
 
-  sheet.getCell('A2').value = 'Speichervolumen';
-  sheet.getCell('B2').value = 200;
-
-  sheet.getCell('A3').value = 'Spitzenvolumenstrom';
-  sheet.getCell('B3').value = 45;
-
-  const outPath = path.join(__dirname, 'data', 'arbeitsdatei.xlsx');
+  const outPath = path.join(__dirname, 'data', 'material.xlsx');
   await workbook.xlsx.writeFile(outPath);
-  console.log('Beispiel-Datei erstellt: ' + outPath);
+  console.log('Beispiel-Materialliste erstellt: ' + outPath);
 }
 
 main();
