@@ -1,13 +1,16 @@
 const ExcelJS = require('exceljs');
 const path = require('path');
+const { KATEGORIEN } = require('./kategorien');
+const { ANSICHT_SHEET, baueAnsicht } = require('./ansicht');
 
 const EXCEL_PATH = path.join(__dirname, 'data', 'material.xlsx');
-const SHEET_NAME = 'Material';
+const DATEN_SHEET = 'Daten';
+const LEGACY_SHEET = 'Material'; // Name vor der Umstellung auf die hübsche Ansicht
 
-// Spalten: A = Kategorie, B = Bezeichnung, C = Menge Neu, D = Menge Gebraucht,
-//          E = Menge Verschmutzt, F = Einheit
-// Eine Zeile pro Artikel (nicht mehr pro Zustand) -> bleibt auch bei Hunderten/Tausenden
-// Positionen übersichtlich und lässt sich in Excel leicht nach Kategorie filtern/sortieren.
+// Spalten im (versteckten) Daten-Blatt: A = Kategorie, B = Bezeichnung, C = Menge Neu,
+// D = Menge Gebraucht, E = Menge Verschmutzt, F = Einheit. Eine Zeile pro Artikel.
+// Dieses Blatt ist die einzige Quelle, die der Bot liest/schreibt. Die sichtbare
+// "Lagerbestand"-Ansicht (ansicht.js) wird daraus bei jedem Speichern neu erzeugt.
 const SPALTE = { kategorie: 1, bezeichnung: 2, neu: 3, gebraucht: 4, verschmutzt: 5, einheit: 6 };
 
 // Absichtlich KEIN Self-Healing: fehlt die Datei, soll das laut auffallen (Fehlermeldung),
@@ -15,11 +18,31 @@ const SPALTE = { kategorie: 1, bezeichnung: 2, neu: 3, gebraucht: 4, verschmutzt
 async function loadWorkbook() {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(EXCEL_PATH);
-  let sheet = workbook.getWorksheet(SHEET_NAME);
+
+  let sheet = workbook.getWorksheet(DATEN_SHEET);
+
   if (!sheet) {
-    sheet = workbook.addWorksheet(SHEET_NAME);
+    const alteSheet = workbook.getWorksheet(LEGACY_SHEET);
+    sheet = workbook.addWorksheet(DATEN_SHEET);
     sheet.getRow(1).values = ['Kategorie', 'Bezeichnung', 'Menge Neu', 'Menge Gebraucht', 'Menge Verschmutzt', 'Einheit'];
+
+    if (alteSheet) {
+      // Migration: Inhalte aus dem alten "Material"-Blatt (vor der hübschen Ansicht) übernehmen
+      alteSheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        sheet.addRow([
+          row.getCell(1).value,
+          row.getCell(2).value,
+          row.getCell(3).value,
+          row.getCell(4).value,
+          row.getCell(5).value,
+          row.getCell(6).value
+        ]);
+      });
+      workbook.removeWorksheet(alteSheet.id);
+    }
   }
+
   return { workbook, sheet };
 }
 
@@ -51,6 +74,27 @@ function zeileZuObjekt(row) {
     mengeVerschmutzt: Number(row.getCell(SPALTE.verschmutzt).value) || 0,
     einheit: row.getCell(SPALTE.einheit).value || ''
   };
+}
+
+// Baut die sichtbare "Lagerbestand"-Ansicht aus dem aktuellen Daten-Blatt neu auf,
+// versteckt das Daten-Blatt und sorgt dafür, dass die Datei auf der hübschen Ansicht
+// öffnet. Wird bei JEDEM Speichern aufgerufen, damit die Optik immer aktuell ist.
+function aktualisiereAnsichtUndSpeichere(workbook, datenSheet) {
+  const alle = [];
+  datenSheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    alle.push(zeileZuObjekt(row));
+  });
+
+  baueAnsicht(workbook, alle, KATEGORIEN);
+  datenSheet.state = 'hidden';
+
+  const ansichtIndex = workbook.worksheets.findIndex((s) => s.name === ANSICHT_SHEET);
+  if (ansichtIndex !== -1) {
+    workbook.views = [{ activeTab: ansichtIndex }];
+  }
+
+  return workbook.xlsx.writeFile(EXCEL_PATH);
 }
 
 // Fügt Positionen hinzu bzw. addiert die Menge in der passenden Zustandsspalte.
@@ -96,7 +140,7 @@ async function addierePositionen(items) {
     }
   }
 
-  await workbook.xlsx.writeFile(EXCEL_PATH);
+  await aktualisiereAnsichtUndSpeichere(workbook, sheet);
   return ergebnisse;
 }
 
@@ -151,7 +195,7 @@ async function entnehmePositionen(items) {
     }
   }
 
-  await workbook.xlsx.writeFile(EXCEL_PATH);
+  await aktualisiereAnsichtUndSpeichere(workbook, sheet);
   return ergebnisse;
 }
 

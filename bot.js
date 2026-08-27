@@ -6,6 +6,8 @@ const { transkribiere } = require('./transcribe');
 const { mistralOCR } = require('./ocr');
 const { excelZuText, wordZuText } = require('./dokument');
 const { ladeRegeln, speichereRegel, ladeArtikelgruppen, speichereArtikelgruppe, REGELN_PATH, GRUPPEN_PATH } = require('./wissen');
+const { schreibeEintrag, leseLetzte } = require('./protokoll');
+const { ladeBegruessung } = require('./begruessung');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
@@ -89,20 +91,8 @@ function teileTextInChunks(text, zeilenProChunk = ZEILEN_PRO_CHUNK) {
 }
 
 // Feste Kategorienliste, damit die Einordnung über Hunderte/Tausende Positionen konsistent bleibt.
-const KATEGORIEN = [
-  'Rohre & Leitungen',
-  'Fittinge & Verbindungstechnik',
-  'Armaturen & Ventile',
-  'Pumpen & Antriebe',
-  'Wärmeerzeugung',
-  'Heizkörper & Flächenheizung',
-  'Sanitärobjekte',
-  'Dämmung & Isolierung',
-  'Befestigung & Montagematerial',
-  'Elektro & Steuerungstechnik',
-  'Werkzeug & Verbrauchsmaterial',
-  'Sonstiges'
-];
+// Zentral in kategorien.js definiert, wird auch von der hübschen Excel-Ansicht (ansicht.js) genutzt.
+const { KATEGORIEN } = require('./kategorien');
 
 // Baut den Systemprompt jedes Mal neu auf, damit zuletzt gemerkte Regeln/Artikelgruppen sofort greifen.
 function baueSystemPrompt() {
@@ -119,6 +109,7 @@ Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, ohne zusätzlichen Text davor od
 {"aktion":"liste"}
 {"aktion":"regel_merken","regel":"Formulierte Regel als vollständiger Satz"}
 {"aktion":"artikelgruppe_merken","gruppe":"Formulierte Gruppierungsregel als vollständiger Satz"}
+{"aktion":"protokoll_abfrage"}
 
 Bedeutung der Aktionen:
 - "hinzufuegen": Material kommt neu dazu, wird geliefert, eingelagert ODER von einem Monteur in die Firma zurückgegeben/eingesortiert. Bei Rückgabe durch einen Monteur "zustand" anhand der Beschreibung wählen: "gebraucht" bei normal gebrauchtem, funktionsfähigem Material, "verschmutzt" wenn der Monteur Verschmutzung/verunreinigt/dreckig o. Ä. erwähnt, sonst "neu" (z. B. bei neuwertig/ungebraucht oder wenn nichts zum Zustand gesagt wird).
@@ -128,6 +119,7 @@ Bedeutung der Aktionen:
 - "liste": Frage nach dem kompletten Bestand
 - "regel_merken": Der Nutzer bittet ausdrücklich darum, sich eine Regel dauerhaft zu merken (z. B. "Merke dir, dass ...", "Neue Regel: ...")
 - "artikelgruppe_merken": Der Nutzer bittet ausdrücklich darum, mehrere ähnliche Artikel unter einem gemeinsamen Sammelbegriff zusammenzufassen
+- "protokoll_abfrage": Der Nutzer fragt nach kürzlich aufgetretenen Fehlern, Problemen, oder was zuletzt passiert ist (z. B. "warum wurde X nicht hinzugefügt?", "gab es Fehler beim Import?", "was ist zuletzt schiefgelaufen?", "was wurde zuletzt gemacht?"). WICHTIG: nutze diese Aktion IMMER, wenn eine Nachricht nicht eindeutig in eine der anderen Aktionen passt (z. B. allgemeine Rückfragen zu vorherigen Aktionen) – rate NICHT stattdessen bei "abfrage" oder anderen Aktionen, wenn die Nachricht nicht klar eine konkrete Materialposition/-menge nennt
 
 Allgemeine Regeln:
 - "einheit" ist optional, Standard ist "Stück"
@@ -239,11 +231,19 @@ async function verarbeiteText(chatId, text) {
     } else if (intent.aktion === 'artikelgruppe_merken') {
       speichereArtikelgruppe(intent.gruppe);
       bot.sendMessage(chatId, `Artikelgruppe gemerkt: "${intent.gruppe}"`);
+    } else if (intent.aktion === 'protokoll_abfrage') {
+      const eintraege = leseLetzte(20);
+      if (!eintraege) {
+        bot.sendMessage(chatId, 'Das Protokoll ist noch leer.');
+      } else {
+        await sendeLangeNachricht(chatId, 'Letzte Protokoll-Einträge:\n' + eintraege);
+      }
     } else {
       bot.sendMessage(chatId, 'Aktion nicht erkannt.');
     }
   } catch (err) {
     console.error(err);
+    schreibeEintrag('Fehler', `Nachricht "${text}" konnte nicht verarbeitet werden: ${err.message}`);
     bot.sendMessage(chatId, 'Fehler bei der Verarbeitung: ' + err.message);
   }
 }
@@ -291,6 +291,7 @@ async function extrahierePositionenAusGrossemText(text, chatId) {
       allePositionen.push(...positionen);
     } catch (err) {
       console.error(`Fehler bei Abschnitt ${i + 1}:`, err);
+      schreibeEintrag('Fehler', `Abschnitt ${i + 1}/${chunks.length} beim Import konnte nicht ausgewertet werden: ${err.message}`);
       bot.sendMessage(chatId, `Abschnitt ${i + 1} konnte nicht ausgewertet werden, wird übersprungen: ${err.message}`);
     }
   }
@@ -333,6 +334,7 @@ async function importiereAusDatei(buffer, mimeType, chatId) {
   }
 
   const ergebnisse = await addierePositionen(positionen);
+  schreibeEintrag('Import', `${ergebnisse.length} Position(en) importiert`);
   const antwortText = ergebnisse
     .map((e) => `${e.bezeichnung} [${e.kategorie}] (${e.zustand}): jetzt ${e.menge} ${e.einheit}`)
     .join('\n');
@@ -348,6 +350,11 @@ bot.on('message', async (msg) => {
 
   // Getippte Nachricht (inkl. Text, der auf dem Handy per Diktierfunktion eingetippt wurde)
   if (msg.text) {
+    // Befehle (/excel, /regeln, /gruppen, /protokoll, /start) laufen über eigene
+    // onText-Handler weiter unten -> hier nicht zusätzlich als Materialkommando interpretieren
+    if (msg.text.trim().startsWith('/')) {
+      return;
+    }
     await verarbeiteText(chatId, msg.text);
     return;
   }
@@ -414,6 +421,18 @@ bot.onText(/\/regeln/, (msg) => {
 bot.onText(/\/gruppen/, (msg) => {
   const gruppen = ladeArtikelgruppen();
   bot.sendMessage(msg.chat.id, gruppen || 'Noch keine Artikelgruppen gemerkt.');
+});
+
+// /protokoll zeigt die letzten Ereignisse/Fehler
+bot.onText(/\/protokoll/, (msg) => {
+  const eintraege = leseLetzte(20);
+  bot.sendMessage(msg.chat.id, eintraege || 'Das Protokoll ist noch leer.');
+});
+
+// /start begrüßt mit einer Kurzanleitung (Inhalt liegt editierbar in data/begruessung.txt)
+bot.onText(/\/start/, async (msg) => {
+  const text = ladeBegruessung();
+  await sendeLangeNachricht(msg.chat.id, text);
 });
 
 console.log('Telegram-Bot läuft (Polling-Modus).');
