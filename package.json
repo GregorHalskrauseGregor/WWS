@@ -1,0 +1,16 @@
+{
+  "name": "ki-excel-tool",
+  "version": "1.0.0",
+  "description": "Webinterface mit KI-Anbindung zum Lesen/Bearbeiten einer Excel-Datei",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "setup-example": "node create-example.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2"
+  }
+}
