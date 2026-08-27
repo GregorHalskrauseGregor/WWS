@@ -16,7 +16,7 @@ async function chat(systemPrompt, userMessage, bilder = []) {
     },
     body: JSON.stringify({
       model: process.env.MINIMAX_MODEL || 'MiniMax-M2',
-      max_tokens: 1000,
+      max_tokens: 3000,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }

@@ -43,7 +43,7 @@ Telegram-Bot, der Materialpositionen per Nachricht entgegennimmt, sie mit einer 
 
 1. **Materialrückgabe** (Monteur bringt Material zurück in die Firma) — läuft über die normale "hinzufuegen"-Erkennung, aber mit Zustand "neu", "gebraucht" oder "verschmutzt". Jeder Artikel ist EINE Zeile mit drei Mengenspalten (Menge Neu, Menge Gebraucht, Menge Verschmutzt) statt mehrerer Zeilen.
 2. **Materialbedarf prüfen** (Monteur braucht Material für einen Einsatz) — reine Abfrage, verändert den Bestand NICHT. Zeigt, was sofort aus dem Lager verfügbar ist (alle drei Mengenspalten zusammengerechnet) und was fehlt/bestellt werden muss. Die eigentliche Reservierung läuft mündlich mit dem Lageristen, nicht über den Bot.
-3. **Lieferschein-/Screenshot-/PDF-/Excel-/Word-Import** (für den Lageristen) — ein Foto, PDF, eine .xlsx- oder .docx-Datei schicken, der Bot liest die Positionen aus und trägt sie als Wareneingang (Zustand "neu") ein. Fotos/PDFs/handschriftliche Listen laufen über Mistral OCR, Excel/Word werden direkt ausgelesen (kein OCR nötig). Funktioniert mit jedem AI_PROVIDER, auch MiniMax.
+3. **Lieferschein-/Screenshot-/PDF-/Excel-/Word-Import** (für den Lageristen) — ein Foto, PDF, eine .xlsx- oder .docx-Datei schicken, der Bot liest die Positionen aus und trägt sie als Wareneingang (Zustand "neu") ein. Fotos/PDFs/handschriftliche Listen laufen über Mistral OCR, Excel/Word werden direkt ausgelesen (kein OCR nötig). Funktioniert mit jedem AI_PROVIDER, auch MiniMax. Sehr lange Dokumente (z. B. hunderte Zeilen) werden automatisch in Häppchen von je ~40 Zeilen aufgeteilt und nacheinander verarbeitet, damit keine KI-Anfrage am Token-Limit scheitert – bei größeren Imports meldet der Bot den Fortschritt Abschnitt für Abschnitt.
 
 ## Excel-Struktur und Kategorien
 

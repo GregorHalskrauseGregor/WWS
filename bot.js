@@ -42,6 +42,52 @@ async function sendeLangeNachricht(chatId, text) {
   return bloecke.length;
 }
 
+// Für den Dokumenten-Import: teilt sehr langen ausgelesenen Text (z. B. aus einer Excel-Datei
+// mit hunderten Zeilen) in mehrere Häppchen auf, damit die KI-Anfrage nicht am Token-Limit
+// scheitert. Jeder Häppchen bekommt die zuletzt gesehene "Tabellenblatt:"-Zeile + Kopfzeile
+// erneut vorangestellt, damit die Spaltenbedeutung erhalten bleibt.
+const ZEILEN_PRO_CHUNK = 40;
+
+function teileTextInChunks(text, zeilenProChunk = ZEILEN_PRO_CHUNK) {
+  const alleZeilen = text.split('\n');
+  const chunks = [];
+  let headerZeilen = [];
+  let puffer = [];
+
+  const chunkAbschliessen = () => {
+    if (puffer.length > headerZeilen.length || (puffer.length > 0 && headerZeilen.length === 0)) {
+      chunks.push(puffer.join('\n'));
+    }
+    puffer = [...headerZeilen];
+  };
+
+  for (let i = 0; i < alleZeilen.length; i++) {
+    const zeile = alleZeilen[i];
+
+    if (zeile.startsWith('Tabellenblatt:')) {
+      chunkAbschliessen();
+      headerZeilen = [zeile];
+      if (alleZeilen[i + 1] !== undefined) {
+        headerZeilen.push(alleZeilen[i + 1]);
+        i++;
+      }
+      puffer = [...headerZeilen];
+      continue;
+    }
+
+    puffer.push(zeile);
+    const datenZeilenImPuffer = puffer.length - headerZeilen.length;
+    if (datenZeilenImPuffer >= zeilenProChunk) {
+      chunkAbschliessen();
+    }
+  }
+  if (puffer.length > headerZeilen.length) {
+    chunks.push(puffer.join('\n'));
+  }
+
+  return chunks.map((c) => c.trim()).filter((c) => c.length > 0);
+}
+
 // Feste Kategorienliste, damit die Einordnung über Hunderte/Tausende Positionen konsistent bleibt.
 const KATEGORIEN = [
   'Rohre & Leitungen',
@@ -229,6 +275,29 @@ Regeln:
   return daten.positionen || [];
 }
 
+// Verarbeitet auch sehr langen Text zuverlässig: teilt in Häppchen auf, verarbeitet
+// nacheinander, führt die Ergebnisse zusammen. Ein fehlerhafter Häppchen bricht den
+// gesamten Import nicht ab, sondern wird übersprungen und gemeldet.
+async function extrahierePositionenAusGrossemText(text, chatId) {
+  const chunks = teileTextInChunks(text);
+  const allePositionen = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks.length > 1) {
+      bot.sendMessage(chatId, `Werte Abschnitt ${i + 1} von ${chunks.length} aus …`);
+    }
+    try {
+      const positionen = await extrahierePositionenAusText(chunks[i]);
+      allePositionen.push(...positionen);
+    } catch (err) {
+      console.error(`Fehler bei Abschnitt ${i + 1}:`, err);
+      bot.sendMessage(chatId, `Abschnitt ${i + 1} konnte nicht ausgewertet werden, wird übersprungen: ${err.message}`);
+    }
+  }
+
+  return allePositionen;
+}
+
 // Zentraler Dateityp-Router: Fotos/Screenshots/PDF -> Mistral OCR -> Text.
 // Excel/Word -> direktes Auslesen, kein OCR nötig. Danach in beiden Fällen derselbe letzte Schritt.
 async function importiereAusDatei(buffer, mimeType, chatId) {
@@ -257,7 +326,7 @@ async function importiereAusDatei(buffer, mimeType, chatId) {
     return;
   }
 
-  const positionen = await extrahierePositionenAusText(text);
+  const positionen = await extrahierePositionenAusGrossemText(text, chatId);
   if (positionen.length === 0) {
     bot.sendMessage(chatId, 'Es wurden keine Materialpositionen erkannt.');
     return;
@@ -267,7 +336,11 @@ async function importiereAusDatei(buffer, mimeType, chatId) {
   const antwortText = ergebnisse
     .map((e) => `${e.bezeichnung} [${e.kategorie}] (${e.zustand}): jetzt ${e.menge} ${e.einheit}`)
     .join('\n');
-  await sendeLangeNachricht(chatId, `${ergebnisse.length} Position(en) eingetragen:\n` + antwortText);
+  const anzahlNachrichten = await sendeLangeNachricht(chatId, `${ergebnisse.length} Position(en) eingetragen:\n` + antwortText);
+
+  if (anzahlNachrichten > 1) {
+    bot.sendDocument(chatId, EXCEL_PATH);
+  }
 }
 
 bot.on('message', async (msg) => {

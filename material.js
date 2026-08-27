@@ -10,6 +10,8 @@ const SHEET_NAME = 'Material';
 // Positionen übersichtlich und lässt sich in Excel leicht nach Kategorie filtern/sortieren.
 const SPALTE = { kategorie: 1, bezeichnung: 2, neu: 3, gebraucht: 4, verschmutzt: 5, einheit: 6 };
 
+// Absichtlich KEIN Self-Healing: fehlt die Datei, soll das laut auffallen (Fehlermeldung),
+// statt stillschweigend eine leere Liste anzulegen und einen echten Datenverlust zu verschleiern.
 async function loadWorkbook() {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(EXCEL_PATH);
