@@ -264,15 +264,31 @@ Regeln:
 - "kategorie": IMMER eine der folgenden festen Kategorien wählen, die inhaltlich am besten passt: ${KATEGORIEN.join(', ')}. Bei Unsicherheit "Sonstiges" verwenden.
 - Neu geliefertes/importiertes Material gilt als Zustand "neu" (automatisch gesetzt, nicht ins JSON aufnehmen)
 - Wenn eine Menge nicht eindeutig lesbar ist, überspringe die Position lieber, als zu raten
-- Kopf-/Fußzeilen, Firmenadressen, Bestellnummern, Summenzeilen, Tabellenüberschriften etc. sind KEINE Materialpositionen, nur echte Artikelzeilen erfassen`;
+- Kopf-/Fußzeilen, Firmenadressen, Bestellnummern, Summenzeilen, Tabellenüberschriften etc. sind KEINE Materialpositionen, nur echte Artikelzeilen erfassen
+- WICHTIG für gültiges JSON: Zollangaben mit dem Zoll-Zeichen (") IMMER als "Zoll" ausschreiben, z. B. "1/2 Zoll" statt "1/2"" – das Zoll-Zeichen bricht sonst das JSON-Format. Auch sonst KEINE unmaskierten Anführungszeichen innerhalb von Textwerten verwenden.`;
 
-  const raw = await provider.chat(systemPrompt, inhalt);
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('Konnte keine Positionen im Dokument erkennen.');
+  async function versuch(zusatzHinweis) {
+    const raw = await provider.chat(systemPrompt + zusatzHinweis, inhalt);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Konnte keine Positionen im Dokument erkennen.');
+    }
+    const daten = JSON.parse(jsonMatch[0]); // wirft bei ungültigem JSON, wird unten abgefangen
+    return daten.positionen || [];
   }
-  const daten = JSON.parse(jsonMatch[0]);
-  return daten.positionen || [];
+
+  try {
+    return await versuch('');
+  } catch (err) {
+    // Ein Fehlversuch mit ungültigem JSON wird einmal mit schärferer Erinnerung wiederholt,
+    // bevor der Abschnitt endgültig als fehlerhaft gilt.
+    if (err instanceof SyntaxError) {
+      return await versuch(
+        '\n\nACHTUNG: Deine letzte Antwort enthielt ungültiges JSON (vermutlich durch ein unmaskiertes Anführungszeichen, z. B. bei einer Zollangabe). Achte diesmal besonders genau darauf: keine rohen " innerhalb von Textwerten, Zoll immer ausschreiben.'
+      );
+    }
+    throw err;
+  }
 }
 
 // Verarbeitet auch sehr langen Text zuverlässig: teilt in Häppchen auf, verarbeitet
