@@ -224,9 +224,16 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
   //    verwirrenden Original-Output.
   //    Wenn der Experte ein _sendDocument mitschickt (z.B. ein PDF), wird das
   //    ebenfalls an den User geschickt.
-  const hinweis = gefiltert.hinweis ? gefiltert.hinweis + '\n\n' : '';
-  const text = hinweis + (gefiltert.text || '(keine Antwort)') + merkeHinweis;
-  await sendeLang(chatId, text);
+  //    Wenn der Experte _inlineButton=true zurückgibt, hat er die Antwort
+  //    schon direkt an den User geschickt (mit Buttons) — wir senden nichts
+  //    mehrfach.
+  if (expertenErgebnis && expertenErgebnis._inlineButton) {
+    // Inline-Button wurde bereits gesendet — nur Themen-Anhang und Komprimierung
+  } else {
+    const hinweis = gefiltert.hinweis ? gefiltert.hinweis + '\n\n' : '';
+    const text = hinweis + (gefiltert.text || '(keine Antwort)') + merkeHinweis;
+    await sendeLang(chatId, text);
+  }
 
   // Optional: Dokument (z.B. PDF) aus dem Experten-Result mitschicken
   if (expertenErgebnis && expertenErgebnis._sendDocument) {
@@ -429,33 +436,68 @@ function messagesAktualisieren(messages, antwort, toolResults, providerName) {
 }
 
 // Globaler Callback-Handler für Inline-Keyboard-Klicks.
-bot.on('callback_query', (query) => {
+bot.on('callback_query', async (query) => {
   const data = query.data || '';
-  if (!data.startsWith('tool_')) {
-    bot.answerCallbackQuery(query.id).catch(() => {});
+  const chatId = query.message && query.message.chat.id;
+
+  // Tool-Bestätigungen (Ja/Nein für Web-Tool-Calls)
+  if (data.startsWith('tool_')) {
+    const [, confId] = data.split(':');
+    const pending = pendingConfirmations.get(confId);
+    if (!pending) {
+      bot.answerCallbackQuery(query.id, { text: 'Diese Anfrage ist abgelaufen oder unbekannt.' }).catch(() => {});
+      return;
+    }
+    const erlaubt = data.startsWith('tool_ok');
+    bot.answerCallbackQuery(query.id, { text: erlaubt ? 'Erlaubt, führe aus …' : 'Abgebrochen.' }).catch(() => {});
+    if (query.message) {
+      bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id
+      }).catch(() => {});
+    }
+    pending.resolve({ erlaubt, grund: erlaubt ? 'vom Nutzer erlaubt' : 'vom Nutzer abgelehnt' });
     return;
   }
-  const [, confId] = data.split(':');
-  const pending = pendingConfirmations.get(confId);
-  if (!pending) {
-    bot.answerCallbackQuery(query.id, {
-      text: 'Diese Anfrage ist abgelaufen oder unbekannt.',
-      show_alert: false
-    }).catch(() => {});
+
+  // Materialaufmaß-Aktionen (PDF / Anpassen / Abbrechen)
+  if (data.startsWith('aufmass_')) {
+    const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
+    if (!matExp || typeof matExp.onCallback !== 'function') {
+      bot.answerCallbackQuery(query.id, { text: 'Materialaufmaß-Experte nicht verfügbar.' }).catch(() => {});
+      return;
+    }
+    // Buttons aus der Nachricht entfernen
+    if (query.message) {
+      bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id
+      }).catch(() => {});
+    }
+    let ergebnis;
+    try {
+      ergebnis = await matExp.onCallback(chatId, data, { bot, schreibeEintrag });
+    } catch (err) {
+      ergebnis = { antwort: 'Fehler: ' + err.message };
+    }
+    if (ergebnis && ergebnis.antwort) {
+      await bot.sendMessage(chatId, ergebnis.antwort);
+    }
+    if (ergebnis && ergebnis._sendDocument) {
+      try {
+        if (fs.existsSync(ergebnis._sendDocument)) {
+          await bot.sendDocument(chatId, ergebnis._sendDocument);
+        }
+      } catch (err) {
+        await bot.sendMessage(chatId, 'Konnte PDF nicht senden: ' + err.message);
+      }
+    }
+    bot.answerCallbackQuery(query.id, { text: '✓' }).catch(() => {});
     return;
   }
-  const erlaubt = data.startsWith('tool_ok');
-  bot.answerCallbackQuery(query.id, {
-    text: erlaubt ? 'Erlaubt, führe aus …' : 'Abgebrochen.'
-  }).catch(() => {});
-  // Buttons aus der Bestätigungsnachricht entfernen.
-  if (query.message) {
-    bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
-      chat_id: query.message.chat.id,
-      message_id: query.message.message_id
-    }).catch(() => {});
-  }
-  pending.resolve({ erlaubt, grund: erlaubt ? 'vom Nutzer erlaubt' : 'vom Nutzer abgelehnt' });
+
+  // Unbekannt
+  bot.answerCallbackQuery(query.id).catch(() => {});
 });
 
 async function komprimiereWennNoetig(chatId, themaId) {
@@ -847,6 +889,27 @@ bot.onText(/\/reset_aufnahme/, (msg) => {
     bot.sendMessage(msg.chat.id, '🔄 Aufmaß-Session zurückgesetzt. Du kannst jetzt ein neues Aufmaß starten.');
   } else {
     bot.sendMessage(msg.chat.id, 'Materialaufmaß-Experte nicht verfügbar.');
+  }
+});
+
+// /pdf erzeugt das PDF aus der aktuellen Materialaufmaß-Session.
+// Fallback für den Fall, dass die Inline-Buttons nicht sichtbar sind.
+bot.onText(/\/pdf/, async (msg) => {
+  const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
+  if (!matExp || typeof matExp.onCallback !== 'function') {
+    bot.sendMessage(msg.chat.id, 'Materialaufmaß-Experte nicht verfügbar.');
+    return;
+  }
+  const ergebnis = await matExp.onCallback(msg.chat.id, 'aufmass_pdf', { bot, schreibeEintrag });
+  if (ergebnis && ergebnis.antwort) await bot.sendMessage(msg.chat.id, ergebnis.antwort);
+  if (ergebnis && ergebnis._sendDocument) {
+    try {
+      if (fs.existsSync(ergebnis._sendDocument)) {
+        await bot.sendDocument(msg.chat.id, ergebnis._sendDocument);
+      }
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, 'Konnte PDF nicht senden: ' + err.message);
+    }
   }
 });
 

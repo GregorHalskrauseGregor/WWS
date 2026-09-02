@@ -466,8 +466,75 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt. Kein Kommentar davor oder danach. F
       return { antwort: msg };
     }
 
-    // Alles vorhanden — PDF generieren
+    // Alles vorhanden — Button anzeigen, PDF wird auf Klick erzeugt.
+    // So hat der User explizite Kontrolle und wir vermeiden die
+    // "Magic Word"-Erkennung ("pdf", "fertig", "passt").
+    if (kontext && kontext.bot) {
+      const status = baueStatus(aktuelleDaten);
+      await kontext.bot.sendMessage(chatId,
+        '✅ Alle Daten erfasst. Bereit zum Erstellen?\n\n' + status + '\n\n',
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '📄 PDF erstellen', callback_data: 'aufmass_pdf' },
+              { text: '✏️ Anpassen / ergänzen', callback_data: 'aufmass_anpassen' },
+              { text: '❌ Abbrechen', callback_data: 'aufmass_abbrechen' }
+            ]]
+          }
+        }
+      );
+      return { antwort: null, _inlineButton: true };
+    }
+    // Fallback ohne Bot-Zugriff: direkt generieren
     return await generiereUndSende(chatId, aktuelleDaten);
+  },
+
+  // Wird vom Bot-Callback-Handler aufgerufen, wenn der User auf einen
+  // "aufmass_*"-Button klickt. Erzeugt das PDF (oder verwirft die Session).
+  async onCallback(chatId, action, kontext) {
+    if (action === 'aufmass_abbrechen') {
+      loescheSession(chatId);
+      return { antwort: '❌ Aufmaß-Session verworfen. Du kannst jederzeit neu starten.' };
+    }
+    if (action === 'aufmass_anpassen') {
+      return {
+        antwort: '✏️ Schick mir deine Anpassungen — z.B. „ändere Position 2 auf 5", „Position 3 raus", „füge 2m Kupferrohr hinzu", „Bezeichnung war Heizung". Die Session bleibt offen.'
+      };
+    }
+    if (action === 'aufmass_pdf') {
+      const session = ladeSession(chatId);
+      if (!session) {
+        return { antwort: 'Session ist abgelaufen. Bitte Daten nochmal schicken.' };
+      }
+      const daten = {
+        projekt: session.projekt || {},
+        positionen: session.positionen || []
+      };
+      if (fehltEtwas(daten)) {
+        return { antwort: 'Es fehlen noch Daten. ' + fehltWas(daten).join(', ') };
+      }
+      // PDF generieren und schicken
+      try {
+        const pdfDaten = {
+          titel: 'Materialaufmaß',
+          untertitel: daten.projekt.bezeichnung,
+          projekt: daten.projekt,
+          positionen: daten.positionen,
+          unterschrift: libUnterschrift.getUnterschriftPfad(chatId),
+          meta: { erstelltVon: 'Bot', erstelltAm: new Date().toISOString() }
+        };
+        const pdfPfad = await generiereAufmassPdf(chatId, pdfDaten);
+        // Antwort + _sendDocument
+        return {
+          antwort: '✅ *Materialaufmaß erstellt*: `' + path.basename(pdfPfad) + '`\n\n' +
+                  'Du kannst weiter anpassen (über /pdf) oder „abbrechen" sagen, um die Session zu beenden.',
+          _sendDocument: pdfPfad
+        };
+      } catch (err) {
+        return { antwort: 'Fehler beim Erstellen des PDFs: ' + err.message };
+      }
+    }
+    return { antwort: 'Unbekannte Aktion: ' + action };
   },
 
   // Foto-Handler: im Materialaufmaß-Modus speichern wir das Foto als Unterschrift
