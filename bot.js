@@ -17,7 +17,6 @@ require('dotenv').config();
 const path = require('path');
 const crypto = require('crypto');
 const TelegramBot = require('node-telegram-bot-api');
-const { getProvider } = require('./providers');
 const { transkribiere } = require('./transcribe');
 const { mistralOCR } = require('./ocr');
 const { excelZuText, wordZuText } = require('./dokument');
@@ -31,6 +30,7 @@ const ratelimit = require('./ratelimit');
 const benutzer = require('./benutzer');
 const { schreibeEintrag, leseLetzte } = require('./protokoll');
 const { ladeBegruessung } = require('./begruessung');
+const { getProvider } = require('./providers');
 
 // Telegram-Limit pro Nachricht. Wir teilen lange Antworten an Zeilenumbrüchen auf.
 const TELEGRAM_MAX = 3800;
@@ -56,18 +56,15 @@ const bot = new TelegramBot(token, { polling: true });
 const mainProvider = getProvider('main');
 const lightProvider = getProvider('light');
 
-// Startup-Hinweis: TAVILY/JINA-Keys sind gesetzt, aber der Provider unterstützt
-// kein Tool-Use (z.B. MiniMax). Die Web-Tools wären nutzlos, also warnen wir
-// laut, statt im ersten Request einen kryptischen API-Fehler zu werfen.
-if (process.env.TAVILY_API_KEY && mainProvider.supportsTools === false) {
-  console.warn(
-    'WARNUNG: TAVILY_API_KEY ist gesetzt, aber ' + mainProvider.name +
-    ' unterstützt keine Tool-Aufrufe. web_search/web_fetch werden NICHT funktionieren. ' +
-    'AI_PROVIDER auf anthropic oder openai stellen, oder TAVILY_API_KEY entfernen.'
-  );
-}
+// Hauptprovider muss Tool-Use unterstützen — wir bauen das für alle drei
+// Provider so, dass es geht (Anthropic/OpenAI nativ, MiniMax per XML-Parser).
+const mainToolProvider = mainProvider;
+
+console.log('Provider main: ' + mainProvider.name);
+console.log('Provider light: ' + lightProvider.name);
 if (process.env.TAVILY_API_KEY || process.env.JINA_API_KEY) {
-  console.log('Web-Tools aktiv: ' + (process.env.TAVILY_API_KEY ? 'web_search ' : '') + (process.env.JINA_API_KEY ? 'web_fetch' : ''));
+  const tools = (process.env.TAVILY_API_KEY ? 'web_search ' : '') + (process.env.JINA_API_KEY ? 'web_fetch' : '');
+  console.log('Web-Tools aktiv: ' + tools.trim());
 }
 
 // Wrapper, die die Provider-Rolle weitergeben, ohne den Aufrufer mit dem ganzen
@@ -157,13 +154,13 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
   const messages = kontext.baueHauptMessages(thema, userText, dokInhalt);
 
   // 3) Haupt-KI-Antwort mit Tool-Loop (Web-Suche, URL-Fetch wenn Keys gesetzt)
-  const tools = toolsModul.verfuegbareTools(mainProvider);
+  const tools = toolsModul.verfuegbareTools(mainToolProvider);
   const raw = await mainChatMitTools(chatId, systemPrompt, messages, tools);
 
   const { sichtbar, merkeFakt } = extrahiereMerkeHooks(raw);
 
-  // 4) Output-Filter: verdächtige Muster (Prompt-Leak, API-Keys) rausfiltern,
-  //    BEVOR der User die Antwort zu sehen kriegt.
+  // 4) Output-Filter: verdächtige Muster (Prompt-Leak, API-Keys, rohe Tool-XML)
+  //    rausfiltern, BEVOR der User die Antwort zu sehen kriegt.
   const gefiltert = sicherheit.filterOutput(sichtbar || '');
   if (gefiltert.gefiltert.length > 0) {
     schreibeEintrag('Sicherheit', `Output-Filter hat ${gefiltert.gefiltert.length} verdächtige Stelle(n) entfernt (${chatId}): ${gefiltert.gefiltert.join(', ')}`);
@@ -176,8 +173,11 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
     if (ok) merkeHinweis = '\n\n_gemerkt: ' + merkeFakt + '_';
   }
 
-  // 6) Senden
-  const text = (gefiltert.text || '(keine Antwort)') + merkeHinweis;
+  // 6) Senden — ggf. mit Hinweis voran, falls der Filter rohe Tool-Calls
+  //    o.Ä. abgefangen hat. Der User kriegt dann eine Erklärung statt dem
+  //    verwirrenden Original-Output.
+  const hinweis = gefiltert.hinweis ? gefiltert.hinweis + '\n\n' : '';
+  const text = hinweis + (gefiltert.text || '(keine Antwort)') + merkeHinweis;
   await sendeLang(chatId, text);
 
   // 7) In Themen-Historie anhängen (den gefilterten Text speichern — wir wollen

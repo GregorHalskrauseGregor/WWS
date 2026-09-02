@@ -44,9 +44,15 @@ Du kannst beliebig viele Themen parallel laufen lassen. Der Bot erkennt automati
 
 ## KI-Anbieter
 
-- **Anthropic** (Claude Sonnet 4) — Standard
+- **Anthropic** (Claude Sonnet 4) — Standard wenn `AI_PROVIDER=anthropic`
 - **OpenAI** (gpt-4o / gpt-4o-mini)
-- **MiniMax** (M2 / M2-mini)
+- **MiniMax** (M2 / M2-mini) — nutzt proprietäres XML-Format für Tool-Calls, wird hier geparst
+
+**Tool-Use** wird von allen drei Providern unterstützt:
+- **Anthropic / OpenAI** — natives Tool-Use-Format
+- **MiniMax** — XML wird im Provider geparst (`<minimax:tool_call>` → Standard-Tool-Loop)
+
+Falls das MiniMax-Modell im Training andere Tool-Namen gelernt hat (z.B. `ddg-search_search`), werden die auf unsere Tool-Namen (`web_search`, `web_fetch`) gemappt. Der System-Prompt weist das Modell explizit an, nur die angebotenen Tool-Namen zu verwenden.
 
 Wechsel = nur `AI_PROVIDER` in der `.env` ändern, kein Code-Umbau.
 
@@ -77,7 +83,7 @@ Der Bot kann im Internet suchen und Webseiten lesen, wenn die passenden API-Keys
 | `web_search` | Aktuelle Infos, Fakten, Nachrichten, Adressen, … | Tavily (speziell für AI-Agenten) | `TAVILY_API_KEY` (gratis, ~1000/Monat) |
 | `web_fetch` | Beliebige URL lesen (gibt Markdown zurück) | Jina Reader (rendert auch JS-Seiten) | `JINA_API_KEY` (optional, ohne Key Rate-Limit) |
 
-**Wichtig für Tool-Use:** aktuell nur `AI_PROVIDER=anthropic` und `AI_PROVIDER=openai` — MiniMax kann in dieser Anbindung keine Tools aufrufen (wird eine klare Fehlermeldung geben).
+**Wichtig für Tool-Use:** aktuell nur `AI_PROVIDER=anthropic` und `AI_PROVIDER=openai` — MiniMax (M2/M3) hat ein proprietäres Tool-Format (XML), das wir nicht parsen. Wenn das Modell trotzdem versucht, ein Tool aufzurufen, fängt der Output-Filter den XML-Block ab und ersetzt ihn durch eine freundliche Erklärung — du siehst dann keine kryptische XML, sondern eine Meldung. Für echten Web-Zugriff: Provider auf `anthropic` oder `openai` umstellen.
 
 Beispiel: Schreib einfach „Was sagt Wikipedia zu Photosynthese?" oder „Fass mir den Artikel auf https://example.com/artikel zusammen" — die KI ruft dann das passende Tool auf und formuliert die Antwort.
 

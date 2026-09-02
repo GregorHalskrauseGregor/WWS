@@ -1,11 +1,12 @@
 // Wählt den KI-Anbieter anhand von process.env.AI_PROVIDER aus.
-// Jeder Provider bietet die gleiche Funktion: chat(systemPrompt, userMessage, options) -> Promise<string>
-//   options.model    - Modellname überschreiben (sonst ENV-Default)
-//   options.maxTokens - Token-Limit für die Antwort
+// Jeder Provider bietet die gleiche Funktion: chat(systemPrompt, userMessage, options) -> Promise<{content, toolCalls}>
+//   options.model      - Modellname überschreiben (sonst ENV-Default)
+//   options.maxTokens  - Token-Limit für die Antwort
+//   options.messages   - Multi-Message-Liste (für Tool-Loop)
+//   options.tools      - Tool-Definitionen (für Tool-Use)
 //
 // Rollen: 'main' (Chat-Antworten) und 'light' (Themen-Klassifikation, Komprimierung).
 // 'light' nutzt AI_PROVIDER_LIGHT + *_MODEL_LIGHT, fällt sonst auf 'main' zurück.
-// So kann später ein zweites kleines Modell rein, ohne dass Code angefasst werden muss.
 
 const providers = {
   anthropic: require('./anthropic'),
@@ -31,9 +32,6 @@ function getProvider(rolle = 'main') {
   }
   // Provider bekommen einen Marker, welche Rolle sie bedienen — manche Provider
   // (z.B. MiniMax später) können je Rolle andere Defaults mitbringen.
-  // 'name' steht zusätzlich dabei, damit der Bot-Loop je nach Anbieter die
-  // Tool-Use-Antworten ins richtige Format übersetzen kann (Anthropic vs. OpenAI
-  // haben unterschiedliche Schemas für tool_result-Blöcke).
   return { ...provider, rolle, name };
 }
 

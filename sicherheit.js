@@ -66,6 +66,20 @@ const VERDAECHTIGE_OUTPUT_MUSTER = [
   /\[MERKE:[^\]]*\]/gi
 ];
 
+// Rohe Tool-Call-XML-Blöcke verschiedener Anbieter. Manche Modelle (z.B.
+// MiniMax-M2/M3) versuchen, eigene proprietäre Tools in einem XML-Stream
+// aufzurufen, den wir nicht verarbeiten. Wenn solche Blöcke im Output landen,
+// filtern wir sie raus und ersetzen sie durch eine Hinweismeldung — sonst
+// sieht der User unverständliches XML.
+const ROHE_TOOL_CALL_BLOCKE = [
+  // MiniMax-Variante: <minimax:tool_call> ... <invoke name="..."> ... </invoke> ...
+  /<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/gi,
+  // Generische <tool_call>-Blöcke (manche Modelle nutzen das nativ)
+  /<tool_call>[\s\S]*?<\/tool_call>/gi,
+  // <invoke>-Blöcke ohne Wrapper (seltener, aber vorsichtshalber)
+  /<invoke\s+name=["'][^"']+["']>[\s\S]*?<\/invoke>/gi
+];
+
 // API-Key-Formate, die niemals im Klartext an einen User gehen dürften.
 // Wir matchen auf typische Prefix-Formen, nicht auf beliebige lange Strings.
 const API_KEY_MUSTER = [
@@ -89,9 +103,25 @@ const ENV_SECRET_MUSTER = [
 ];
 
 function filterOutput(text) {
-  if (!text || typeof text !== 'string') return { text, gefiltert: [] };
+  if (!text || typeof text !== 'string') return { text, gefiltert: [], hinweis: null };
   let result = text;
   const gefiltert = [];
+  let hinweis = null;
+
+  // 1) Rohe Tool-Call-XML-Blöcke rauswerfen + Hinweis vorbereiten.
+  //    Manche Modelle versuchen, eigene proprietäre Tools im XML-Format
+  //    aufzurufen — wir verarbeiten das nicht, also muss der User das nicht
+  //    sehen, sondern eine sinnvolle Erklärung kriegen.
+  for (const pattern of ROHE_TOOL_CALL_BLOCKE) {
+    if (pattern.test(result)) {
+      gefiltert.push('roher Tool-Call-Block (Modell wollte Tool aufrufen, das wir nicht unterstützen)');
+      result = result.replace(pattern, '').trim();
+      if (!hinweis) {
+        hinweis = '⚠️ Das Modell hat versucht, ein eigenes Tool aufzurufen, das auf diesem Provider nicht verfügbar ist. ' +
+          'Für Web-Recherche braucht der Bot `AI_PROVIDER=anthropic` oder `AI_PROVIDER=openai` in der `.env`.';
+      }
+    }
+  }
 
   for (const pattern of VERDAECHTIGE_OUTPUT_MUSTER) {
     if (pattern.test(result)) {
@@ -114,11 +144,12 @@ function filterOutput(text) {
     }
   }
 
-  return { text: result.trim(), gefiltert };
+  return { text: result.trim(), gefiltert, hinweis };
 }
 
 module.exports = {
   BLOCKIERTE_DOMAINS,
+  ROHE_TOOL_CALL_BLOCKE,
   istBlockierteUrl,
   filterOutput
 };
