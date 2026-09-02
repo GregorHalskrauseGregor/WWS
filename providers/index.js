@@ -31,7 +31,10 @@ function getProvider(rolle = 'main') {
   }
   // Provider bekommen einen Marker, welche Rolle sie bedienen — manche Provider
   // (z.B. MiniMax später) können je Rolle andere Defaults mitbringen.
-  return { ...provider, rolle };
+  // 'name' steht zusätzlich dabei, damit der Bot-Loop je nach Anbieter die
+  // Tool-Use-Antworten ins richtige Format übersetzen kann (Anthropic vs. OpenAI
+  // haben unterschiedliche Schemas für tool_result-Blöcke).
+  return { ...provider, rolle, name };
 }
 
 module.exports = { getProvider };

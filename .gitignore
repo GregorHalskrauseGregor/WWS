@@ -1,2 +1,7 @@
 node_modules/
 .env
+
+# User-Daten (Themen, Gedächtnis, Protokoll) — die gehören ins Railway-Volume,
+# nicht ins Repo. Beim lokalen Entwickeln liegt das Verzeichnis trotzdem daneben,
+# wird aber nicht committet.
+data/

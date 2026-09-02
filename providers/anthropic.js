@@ -1,5 +1,8 @@
 // Anthropic-Provider. Erwartet ANTHROPIC_API_KEY und optional ANTHROPIC_MODEL / ANTHROPIC_MODEL_LIGHT.
-// Reine Text-API in dieser Version (Bilder laufen vorher über Mistral OCR).
+// Unterstützt Text und Tool-Use (nativ in der Anthropic-API).
+// Rückgabe: { content: string, toolCalls: [{id, name, args}] | null }
+const { toolsFuerAnthropic } = require('../tools');
+
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const LIGHT_MODEL = 'claude-haiku-4-5';
 
@@ -10,6 +13,22 @@ async function chat(systemPrompt, userMessage, options = {}) {
     || (istLight ? LIGHT_MODEL : DEFAULT_MODEL);
   const maxTokens = options.maxTokens || (istLight ? 500 : 2000);
 
+  // Messages-Liste wird vom Bot-Loop aufgebaut, wenn Tools im Spiel sind.
+  // Im einfachen Fall (kein Tool-Loop) reicht eine User-Message.
+  const messages = Array.isArray(options.messages) && options.messages.length > 0
+    ? options.messages
+    : [{ role: 'user', content: userMessage }];
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages
+  };
+  if (Array.isArray(options.tools) && options.tools.length > 0) {
+    body.tools = toolsFuerAnthropic(options.tools);
+  }
+
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -17,20 +36,24 @@ async function chat(systemPrompt, userMessage, options = {}) {
       'x-api-key': process.env.ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01'
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }]
-    })
+    body: JSON.stringify(body)
   });
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error('Anthropic-API-Fehler: ' + JSON.stringify(data));
+    throw new Error('Anthropic-API-Fehler: ' + JSON.stringify(data).slice(0, 500));
   }
 
-  return data.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+  // Anthropic gibt ein Array von Blöcken zurück. Wir trennen Text von tool_use.
+  let text = '';
+  const toolCalls = [];
+  for (const block of data.content || []) {
+    if (block.type === 'text') text += (text ? '\n' : '') + block.text;
+    else if (block.type === 'tool_use') {
+      toolCalls.push({ id: block.id, name: block.name, args: block.input || {} });
+    }
+  }
+  return { content: text, toolCalls: toolCalls.length ? toolCalls : null };
 }
 
-module.exports = { chat, DEFAULT_MODEL, LIGHT_MODEL };
+module.exports = { chat, DEFAULT_MODEL, LIGHT_MODEL, supportsTools: true };

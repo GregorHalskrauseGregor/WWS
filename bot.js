@@ -14,6 +14,8 @@
 // Multi-User: Jeder Telegram-Chat bekommt eigene Themen, eigenes Gedächtnis.
 
 require('dotenv').config();
+const path = require('path');
+const crypto = require('crypto');
 const TelegramBot = require('node-telegram-bot-api');
 const { getProvider } = require('./providers');
 const { transkribiere } = require('./transcribe');
@@ -23,6 +25,10 @@ const themen = require('./themen');
 const gedaechtnis = require('./gedaechtnis');
 const kompressor = require('./kompressor');
 const kontext = require('./kontext');
+const toolsModul = require('./tools');
+const sicherheit = require('./sicherheit');
+const ratelimit = require('./ratelimit');
+const benutzer = require('./benutzer');
 const { schreibeEintrag, leseLetzte } = require('./protokoll');
 const { ladeBegruessung } = require('./begruessung');
 
@@ -35,17 +41,45 @@ if (!token) {
   process.exit(1);
 }
 
+// Sanity-Check: kann der Bot ins data/-Verzeichnis schreiben? Auf Railway muss
+// dort ein Volume gemountet sein, sonst sind nach dem nächsten Redeploy alle
+// Themen/Gedächtnis/Protokoll weg. Wir schreiben nicht — wir versuchen nur mkdir.
+try {
+  require('fs').mkdirSync(path.join(__dirname, 'data', 'users'), { recursive: true });
+} catch (err) {
+  console.error('WARNUNG: data/-Verzeichnis ist nicht beschreibbar. ' +
+    'In Railway muss unter /app/data ein Volume gemountet sein, sonst ' +
+    'gehen alle gespeicherten Daten bei jedem Redeploy verloren. Ursache: ' + err.message);
+}
+
 const bot = new TelegramBot(token, { polling: true });
 const mainProvider = getProvider('main');
 const lightProvider = getProvider('light');
 
+// Startup-Hinweis: TAVILY/JINA-Keys sind gesetzt, aber der Provider unterstützt
+// kein Tool-Use (z.B. MiniMax). Die Web-Tools wären nutzlos, also warnen wir
+// laut, statt im ersten Request einen kryptischen API-Fehler zu werfen.
+if (process.env.TAVILY_API_KEY && mainProvider.supportsTools === false) {
+  console.warn(
+    'WARNUNG: TAVILY_API_KEY ist gesetzt, aber ' + mainProvider.name +
+    ' unterstützt keine Tool-Aufrufe. web_search/web_fetch werden NICHT funktionieren. ' +
+    'AI_PROVIDER auf anthropic oder openai stellen, oder TAVILY_API_KEY entfernen.'
+  );
+}
+if (process.env.TAVILY_API_KEY || process.env.JINA_API_KEY) {
+  console.log('Web-Tools aktiv: ' + (process.env.TAVILY_API_KEY ? 'web_search ' : '') + (process.env.JINA_API_KEY ? 'web_fetch' : ''));
+}
+
 // Wrapper, die die Provider-Rolle weitergeben, ohne den Aufrufer mit dem ganzen
-// Provider-Objekt zu belasten.
+// Provider-Objekt zu belasten. Provider liefern {content, toolCalls} — die Wrapper
+// hier geben für Aufrufer ohne Tool-Loop nur den Text-Content zurück.
 async function mainChat(systemPrompt, userMessage, opts = {}) {
-  return mainProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'main' });
+  const r = await mainProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'main' });
+  return r.content;
 }
 async function lightChat(systemPrompt, userMessage, opts = {}) {
-  return lightProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'light' });
+  const r = await lightProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'light' });
+  return r.content;
 }
 
 async function sendeLang(chatId, text) {
@@ -95,6 +129,15 @@ function extrahiereMerkeHooks(antwort) {
 
 // Zentrale Verarbeitung: von (bereits vorliegendem) Text bis zur KI-Antwort.
 async function verarbeiteText(chatId, userText, dokInhalt = '') {
+  // 0) Rate-Limit prüfen, BEVOR irgendwas anderes läuft.
+  const rl = ratelimit.pruefeNachricht(chatId);
+  if (!rl.ok) {
+    bot.sendMessage(chatId, '⛔ ' + rl.grund);
+    schreibeEintrag('Sicherheit', `Rate-Limit blockt Nachricht von ${chatId}: ${rl.grund}`);
+    return;
+  }
+  ratelimit.zaehleNachricht(chatId);
+
   // 1) Themen-Klassifikation per Light-Provider
   const klassifikation = await kontext.klassifiziereThema(lightChat, chatId, userText);
   let thema;
@@ -113,62 +156,242 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
   const systemPrompt = kontext.baueHauptSystemPrompt(gedaechtnisText);
   const messages = kontext.baueHauptMessages(thema, userText, dokInhalt);
 
-  // 3) Haupt-KI-Antwort (eine chat-Anfrage, die alle Messages als Verlauf bekommt)
-  const raw = await mainChatMultiMessage(systemPrompt, messages);
+  // 3) Haupt-KI-Antwort mit Tool-Loop (Web-Suche, URL-Fetch wenn Keys gesetzt)
+  const tools = toolsModul.verfuegbareTools(mainProvider);
+  const raw = await mainChatMitTools(chatId, systemPrompt, messages, tools);
 
   const { sichtbar, merkeFakt } = extrahiereMerkeHooks(raw);
 
-  // 4) MERKE-Hook ins Gedächtnis schieben
+  // 4) Output-Filter: verdächtige Muster (Prompt-Leak, API-Keys) rausfiltern,
+  //    BEVOR der User die Antwort zu sehen kriegt.
+  const gefiltert = sicherheit.filterOutput(sichtbar || '');
+  if (gefiltert.gefiltert.length > 0) {
+    schreibeEintrag('Sicherheit', `Output-Filter hat ${gefiltert.gefiltert.length} verdächtige Stelle(n) entfernt (${chatId}): ${gefiltert.gefiltert.join(', ')}`);
+  }
+
+  // 5) MERKE-Hook ins Gedächtnis schieben
   let merkeHinweis = '';
   if (merkeFakt) {
     const ok = gedaechtnis.fuegeHinzu(chatId, merkeFakt);
     if (ok) merkeHinweis = '\n\n_gemerkt: ' + merkeFakt + '_';
   }
 
-  // 5) Senden
-  const text = (sichtbar || '(keine Antwort)') + merkeHinweis;
+  // 6) Senden
+  const text = (gefiltert.text || '(keine Antwort)') + merkeHinweis;
   await sendeLang(chatId, text);
 
-  // 6) In Themen-Historie anhängen
+  // 7) In Themen-Historie anhängen (den gefilterten Text speichern — wir wollen
+  //    nicht den rohen Output mit den gefilterten Geheimnissen persistieren)
   themen.haengeNachrichtAn(chatId, thema.id, 'user', userText);
-  themen.haengeNachrichtAn(chatId, thema.id, 'assistant', sichtbar || '');
+  themen.haengeNachrichtAn(chatId, thema.id, 'assistant', gefiltert.text || '');
 
-  // 7) Komprimierung im Hintergrund (blockiert den User nicht)
+  // 8) Komprimierung im Hintergrund (blockiert den User nicht)
   komprimiereWennNoetig(chatId, thema.id).catch((err) => {
     schreibeEintrag('Fehler', `Komprimierung fehlgeschlagen (${thema.id}): ${err.message}`);
   });
 }
 
-// Multi-Message-Chat: die Provider haben aktuell eine 2-Argument-Signatur
-// (systemPrompt, userMessage). Wir setzen hier die Messages zu einem einzigen
-// user-String zusammen, der die vorherigen Turns als Kontext einbaut.
-// (Erweiterung auf native Multi-Message pro Provider bleibt für später.)
-async function mainChatMultiMessage(systemPrompt, messages) {
-  if (messages.length === 0) return '';
-  const letzte = messages[messages.length - 1];
-  const vorherige = messages.slice(0, -1);
-  if (vorherige.length === 0) {
-    return mainChat(systemPrompt, letzte.content);
-  }
-  // Vorherige Messages werden kompakt als "Bisheriger Verlauf:" zusammengefasst.
-  // Die letzte Message ist die eigentliche Frage.
-  const block = vorherige
-    .map((m) => {
-      const wer = m.role === 'assistant' ? 'Assistent' : 'Nutzer';
-      return `${wer}: ${m.content}`;
-    })
-    .join('\n');
-  const kombi = `Bisheriger Verlauf in diesem Thema:
-"""
-${block}
-"""
+// Multi-Message-Chat mit Tool-Loop. Ersetzt die frühere "alles-in-einen-String-packen"-
+// Variante, weil die Provider inzwischen native Multi-Message + Tool-Use können.
+// Ablauf:
+//   1) Provider mit den bisherigen Messages + (falls vorhanden) Tool-Defs aufrufen
+//   2) Wenn toolCalls zurückkommen: User um Bestätigung fragen (Inline-Keyboard),
+//      dann Tools ausführen und Ergebnisse als weitere Messages anhängen.
+//      Maximal MAX_TOOL_ITER Iterationen.
+//   3) Wenn keine toolCalls mehr: finalen content zurückgeben (vorher durch den
+//      Output-Filter schicken).
+const MAX_TOOL_ITER = 5;
+const TOOL_BESTAETIGUNG_TIMEOUT_MS = 60_000;
 
-Aktuelle Nutzernachricht:
-"""
-${letzte.content}
-"""`;
-  return mainChat(systemPrompt, kombi);
+// State für offene Tool-Bestätigungen. Key: confirmationId.
+// Nach Auflösung (Klick oder Timeout) wird der Eintrag gelöscht.
+const pendingConfirmations = new Map();
+
+function neueConfirmationId() {
+  return crypto.randomBytes(8).toString('hex');
 }
+
+function beschreibeToolCalls(toolCalls) {
+  return toolCalls.map((c) => {
+    if (c.name === 'web_search') {
+      return '🔍 Web-Suche nach: „' + (c.args.query || '?') + '"';
+    }
+    if (c.name === 'web_fetch') {
+      return '🌐 Webseite lesen: ' + (c.args.url || '?');
+    }
+    return '🔧 ' + c.name + '(' + JSON.stringify(c.args).slice(0, 80) + ')';
+  }).join('\n');
+}
+
+async function warteAufToolBestaetigung(chatId, toolCalls) {
+  const confId = neueConfirmationId();
+  const text = '⚠️ Die KI möchte folgende externe Aktion ausführen:\n\n' +
+    beschreibeToolCalls(toolCalls) +
+    '\n\nErlauben?';
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const cleanup = () => {
+      pendingConfirmations.delete(confId);
+      clearTimeout(timer);
+    };
+    const resolveOnce = (wert) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(wert);
+    };
+
+    const timer = setTimeout(() => {
+      // Timeout: als Ablehnung werten, User hat nicht reagiert.
+      bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+        chat_id: chatId,
+        message_id: bestaetigungsMsgId
+      }).catch(() => { /* egal, Buttons sind eh nur kosmetisch */ });
+      bot.sendMessage(chatId, '⏱️ Bestätigung abgelaufen, Tool-Aufruf abgebrochen.');
+      resolveOnce({ erlaubt: false, grund: 'Timeout' });
+    }, TOOL_BESTAETIGUNG_TIMEOUT_MS);
+
+    let bestaetigungsMsgId = 0;
+    bot.sendMessage(chatId, text, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Ja, abrufen', callback_data: 'tool_ok:' + confId },
+          { text: '❌ Nein, abbrechen', callback_data: 'tool_no:' + confId }
+        ]]
+      }
+    }).then((sent) => {
+      bestaetigungsMsgId = sent.message_id;
+    }).catch((err) => {
+      console.error('Konnte Bestätigungs-Nachricht nicht senden:', err);
+      resolveOnce({ erlaubt: false, grund: 'Sendefehler' });
+    });
+
+    pendingConfirmations.set(confId, { resolve: resolveOnce });
+  });
+}
+
+async function mainChatMitTools(chatId, systemPrompt, initialMessages, tools) {
+  let messages = [...initialMessages];
+  const providerName = mainProvider.name;
+
+  for (let i = 0; i < MAX_TOOL_ITER; i++) {
+    const opts = { rolle: 'main', messages, maxTokens: 2000 };
+    if (tools && tools.length > 0) opts.tools = tools;
+    const antwort = await mainProvider.chat(systemPrompt, '', opts);
+
+    if (!antwort.toolCalls || antwort.toolCalls.length === 0) {
+      return antwort.content || '';
+    }
+
+    // User-Bestätigung einholen (Strikter Modus).
+    const bestaetigung = await warteAufToolBestaetigung(chatId, antwort.toolCalls);
+    if (!bestaetigung.erlaubt) {
+      // KI bekommt "abgelehnt" als Tool-Result, damit sie ihre Antwort ohne
+      // das Tool formulieren kann.
+      const toolResults = antwort.toolCalls.map((c) => ({
+        id: c.id,
+        name: c.name,
+        result: 'Tool-Aufruf wurde vom Nutzer abgelehnt: ' + bestaetigung.grund +
+          '. Antworte ohne dieses Tool, basierend auf deinem bisherigen Wissen.'
+      }));
+      schreibeEintrag('Sicherheit', `Tool-Aufruf abgelehnt (${chatId}): ${antwort.toolCalls.map(c => c.name + ' ' + JSON.stringify(c.args)).join('; ')}`);
+      messagesAktualisieren(messages, antwort, toolResults, providerName);
+      continue;
+    }
+
+    // Tool-Rate-Limit prüfen.
+    const toolCheck = ratelimit.pruefeToolCall(chatId);
+    if (!toolCheck.ok) {
+      const toolResults = antwort.toolCalls.map((c) => ({
+        id: c.id,
+        name: c.name,
+        result: toolCheck.grund
+      }));
+      bot.sendMessage(chatId, '⚠️ ' + toolCheck.grund);
+      schreibeEintrag('Sicherheit', `Tool-Limit erreicht (${chatId})`);
+      messagesAktualisieren(messages, antwort, toolResults, providerName);
+      continue;
+    }
+    ratelimit.zaehleToolCall(chatId, antwort.toolCalls.length);
+
+    // Tools ausführen — parallel, alle unabhängig. Ergebnisse ins Protokoll loggen.
+    const toolResults = await Promise.all(antwort.toolCalls.map(async (call) => {
+      const result = await toolsModul.fuehreToolAus(call.name, call.args);
+      // Tool-Call ins Protokoll — für Audit-Zwecke.
+      schreibeEintrag('Tool', `${call.name} (${chatId}): ${JSON.stringify(call.args).slice(0, 200)}`);
+      return { id: call.id, name: call.name, result };
+    }));
+
+    messagesAktualisieren(messages, antwort, toolResults, providerName);
+  }
+
+  // Iterationslimit erreicht — die KI kam nicht zum Ende. Was sie bisher gesagt
+  // hat, ist die beste Annäherung.
+  schreibeEintrag('Warnung', `Tool-Loop nach ${MAX_TOOL_ITER} Iterationen abgebrochen (${chatId}).`);
+  return '(Die Anfrage hat zu viele Tool-Aufrufe gebraucht und wurde abgebrochen.)';
+}
+
+function messagesAktualisieren(messages, antwort, toolResults, providerName) {
+  if (providerName === 'anthropic') {
+    messages.push({
+      role: 'assistant',
+      content: antwort.toolCalls.map((c) => ({
+        type: 'tool_use', id: c.id, name: c.name, input: c.args
+      }))
+    });
+    messages.push({
+      role: 'user',
+      content: toolResults.map((r) => ({
+        type: 'tool_result', tool_use_id: r.id, content: r.result
+      }))
+    });
+  } else if (providerName === 'openai') {
+    messages.push({
+      role: 'assistant',
+      content: antwort.content || null,
+      tool_calls: antwort.toolCalls.map((c) => ({
+        id: c.id, type: 'function',
+        function: { name: c.name, arguments: JSON.stringify(c.args) }
+      }))
+    });
+    for (const r of toolResults) {
+      messages.push({ role: 'tool', tool_call_id: r.id, content: r.result });
+    }
+  } else {
+    // Sollte nicht passieren, weil Provider ohne Tool-Support gar keine Calls liefern.
+  }
+}
+
+// Globaler Callback-Handler für Inline-Keyboard-Klicks.
+bot.on('callback_query', (query) => {
+  const data = query.data || '';
+  if (!data.startsWith('tool_')) {
+    bot.answerCallbackQuery(query.id).catch(() => {});
+    return;
+  }
+  const [, confId] = data.split(':');
+  const pending = pendingConfirmations.get(confId);
+  if (!pending) {
+    bot.answerCallbackQuery(query.id, {
+      text: 'Diese Anfrage ist abgelaufen oder unbekannt.',
+      show_alert: false
+    }).catch(() => {});
+    return;
+  }
+  const erlaubt = data.startsWith('tool_ok');
+  bot.answerCallbackQuery(query.id, {
+    text: erlaubt ? 'Erlaubt, führe aus …' : 'Abgebrochen.'
+  }).catch(() => {});
+  // Buttons aus der Bestätigungsnachricht entfernen.
+  if (query.message) {
+    bot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+      chat_id: query.message.chat.id,
+      message_id: query.message.message_id
+    }).catch(() => {});
+  }
+  pending.resolve({ erlaubt, grund: erlaubt ? 'vom Nutzer erlaubt' : 'vom Nutzer abgelehnt' });
+});
 
 async function komprimiereWennNoetig(chatId, themaId) {
   const t = themen.ladeThema(chatId, themaId);
@@ -185,6 +408,25 @@ async function komprimiereWennNoetig(chatId, themaId) {
 // Text -> sofort verarbeiten
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
+
+  // Beim allerersten Kontakt: komplette User-Verzeichnisstruktur anlegen.
+  // Macht den Bot-Daten-Stand vorhersehbar und gibt dem Admin eine
+  // saubere Struktur zum Pflegen / Löschen pro User.
+  let userState;
+  try {
+    userState = benutzer.initialisiereAusMessage(msg);
+  } catch (err) {
+    console.error('User-Initialisierung fehlgeschlagen:', err);
+    return; // Ohne User-State keine Verarbeitung — lieber gar nichts als kaputten State.
+  }
+  if (userState.warNeu) {
+    // Kurzer Willkommens-Ping, nicht zu aufdringlich. Der /start-Befehl gibt
+    // ohnehin die volle Anleitung.
+    const name = userState.profil.displayName ? `, ${userState.profil.displayName}` : '';
+    bot.sendMessage(chatId, `👋 Hallo${name}! Deine Daten liegen unter \`data/users/${userState.profil.chatId}/\`. Du kannst jederzeit loschatten — sag einfach was, oder tipp /start für die Anleitung.`);
+    schreibeEintrag('Info', `Neuer User: ${userState.profil.chatId} (${userState.profil.displayName || userState.profil.username || 'anonym'})`);
+  }
+
   if (msg.text) {
     const text = msg.text.trim();
     if (text.startsWith('/')) return; // Commands laufen über onText-Handler
@@ -396,7 +638,56 @@ bot.onText(/\/vergiss\s+(\d+)/, (msg, match) => {
 });
 
 bot.onText(/\/user/, (msg) => {
-  bot.sendMessage(msg.chat.id, `Deine Chat-ID: ${msg.chat.id}\nThemen: ${themen.ladeIndex(msg.chat.id).length}\nGedächtnis: ${gedaechtnis.ladeFakten(msg.chat.id).length} Fakten`);
+  const rl = ratelimit.status(msg.chat.id);
+  const profil = benutzer.ladeProfil(msg.chat.id);
+  const profilTeil = profil
+    ? `Name: ${profil.displayName || '—'}\n` +
+      `Username: ${profil.username ? '@' + profil.username : '—'}\n` +
+      `Erster Kontakt: ${(profil.firstSeen || '').slice(0, 10)}\n` +
+      `Letzter Kontakt: ${(profil.lastSeen || '').slice(0, 10)}\n` +
+      `Daten unter: data/users/${profil.chatId}/\n`
+    : 'Profil: (noch nicht initialisiert)';
+  bot.sendMessage(msg.chat.id,
+    `Deine Chat-ID: ${msg.chat.id}\n` +
+    profilTeil +
+    `Themen: ${themen.ladeIndex(msg.chat.id).length}\n` +
+    `Gedächtnis: ${gedaechtnis.ladeFakten(msg.chat.id).length} Fakten\n` +
+    `Rate-Limit: ${rl.stunde} Nachrichten/Stunde, ${rl.tag} Nachrichten/Tag, ${rl.tools} Tool-Calls/Tag`);
+});
+
+bot.onText(/\/delete-my-data/, async (msg) => {
+  // Hard delete: gesamten User-Ordner weg. Nicht wiederherstellbar.
+  const profil = benutzer.ladeProfil(msg.chat.id);
+  if (!profil) {
+    bot.sendMessage(msg.chat.id, 'Du hast hier keine gespeicherten Daten.');
+    return;
+  }
+  const ok = benutzer.loescheAlles(msg.chat.id);
+  if (ok) {
+    schreibeEintrag('Sicherheit', `User-Daten gelöscht auf Wunsch: ${msg.chat.id} (${profil.displayName || profil.username || 'anonym'})`);
+    bot.sendMessage(msg.chat.id,
+      '✅ Alle deine Daten (Themen, Gedächtnis, Profil, Rate-Limit-Counter) sind gelöscht.\n' +
+      'Der Ordner `data/users/' + msg.chat.id + '/` ist weg. Wenn du wieder schreibst, wird er frisch angelegt.');
+  } else {
+    bot.sendMessage(msg.chat.id, 'Konnte deine Daten nicht löschen — frag beim Admin nach.');
+  }
+});
+
+bot.onText(/\/wer-bin-ich/, (msg) => {
+  const profil = benutzer.ladeProfil(msg.chat.id);
+  if (!profil) {
+    bot.sendMessage(msg.chat.id, 'Kein Profil gefunden. Schreib erst eine Nachricht, dann lege ich eins an.');
+    return;
+  }
+  const zeilen = [
+    `Chat-ID: ${profil.chatId}`,
+    `Name: ${profil.displayName || '—'}`,
+    `Username: ${profil.username ? '@' + profil.username : '—'}`,
+    `Erster Kontakt: ${(profil.firstSeen || '').slice(0, 19).replace('T', ' ')}`,
+    `Letzter Kontakt: ${(profil.lastSeen || '').slice(0, 19).replace('T', ' ')}`
+  ];
+  if (profil.notiz) zeilen.push(`Admin-Notiz: ${profil.notiz}`);
+  bot.sendMessage(msg.chat.id, 'Dein Profil:\n' + zeilen.join('\n'));
 });
 
 bot.onText(/\/protokoll/, (msg) => {
