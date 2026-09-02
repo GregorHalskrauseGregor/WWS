@@ -294,18 +294,36 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt. Kein Kommentar davor oder danach. F
       return { antwort: 'Konnte keine strukturierten Daten extrahieren. Bitte schick das Aufmaß in der Form: „PRJ-NR, Bezeichnung, 12m Kupferrohr 22mm, 3 Wandscheiben DN20, …"' };
     }
 
-    // In Session speichern (persistiert)
-    speichereSession(chatId, {
-      zuletztGeaendert: new Date().toISOString(),
-      projekt: extrahiert.projekt || {},
-      positionen: Array.isArray(extrahiert.positionen) ? extrahiert.positionen : []
-    });
+    // Hat die KI tatsächlich neue Daten extrahiert? Wenn nicht, behalte die
+    // existierende Session unverändert. Wichtig: sonst würde eine Bestätigung
+    // wie "passt, jetzt als pdf" die Session leeren und das PDF nie generiert.
+    const neuePositionen = Array.isArray(extrahiert.positionen) ? extrahiert.positionen : [];
+    const neuesProjekt = extrahiert.projekt || {};
+    const hatNeueDaten = neuePositionen.length > 0
+      || neuesProjekt.nummer
+      || neuesProjekt.bezeichnung;
 
-    // Prüfen, ob was fehlt
-    if (fehltEtwas(extrahiert)) {
-      const fehlt = fehltWas(extrahiert);
+    if (hatNeueDaten) {
+      // Session aktualisieren
+      speichereSession(chatId, {
+        zuletztGeaendert: new Date().toISOString(),
+        projekt: neuesProjekt,
+        positionen: neuePositionen
+      });
+    }
+    // Wenn keine neuen Daten: existierende Session behalten (wenn vorhanden)
+
+    // Aktuelle Daten für die folgenden Checks verwenden — entweder die alten
+    // aus existingSession oder die gerade aktualisierten.
+    const aktuelleDaten = hatNeueDaten
+      ? extrahiert
+      : (existingSession || extrahiert);
+
+    // Prüfen, ob was fehlt — gegen die aktuellen (ggf. erhaltenen) Daten
+    if (fehltEtwas(aktuelleDaten)) {
+      const fehlt = fehltWas(aktuelleDaten);
       return {
-        antwort: 'Ich habe bisher:\n\n' + baueStatus(extrahiert) +
+        antwort: 'Ich habe bisher:\n\n' + baueStatus(aktuelleDaten) +
                  '\n\n⚠️ Es fehlt noch: *' + fehlt.join(', ') + '*.\n\n' +
                  'Schick mir die fehlenden Infos einfach in einer Nachricht — am besten alles auf einmal.'
       };
@@ -319,11 +337,10 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt. Kein Kommentar davor oder danach. F
     if (fehltRessourcen.length > 0) {
       const daten = {
         titel: 'Materialaufmaß',
-        untertitel: extrahiert.projekt.bezeichnung,
-        projekt: extrahiert.projekt,
-        positionen: extrahiert.positionen
+        untertitel: aktuelleDaten.projekt.bezeichnung,
+        projekt: aktuelleDaten.projekt,
+        positionen: aktuelleDaten.positionen
       };
-      // Trotzdem Session speichern, User kann später ergänzen
       let msg = 'Daten vollständig:\n\n' + baueStatus(daten) +
                 '\n\n⚠️ Mir fehlen aber noch: *' + fehltRessourcen.join(', ') + '*\n';
       if (fehltRessourcen.includes('aufnahme_vorlage')) {
@@ -337,7 +354,7 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt. Kein Kommentar davor oder danach. F
     }
 
     // Alles vorhanden — PDF generieren
-    return await generiereUndSende(chatId, extrahiert);
+    return await generiereUndSende(chatId, aktuelleDaten);
   },
 
   // Foto-Handler: im Materialaufmaß-Modus speichern wir das Foto als Unterschrift
