@@ -895,9 +895,21 @@ bot.onText(/\/reset_aufnahme/, (msg) => {
 // /pdf erzeugt das PDF aus der aktuellen Materialaufmaß-Session.
 // Fallback für den Fall, dass die Inline-Buttons nicht sichtbar sind.
 bot.onText(/\/pdf/, async (msg) => {
-  const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
+  // Direkter require als Fallback — falls experten.ladeExperten() aus
+  // irgendeinem Grund (Cache, alter Code) leer ist, laden wir das Modul
+  // direkt. So funktioniert /pdf auch nach problematischen Restarts.
+  let matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
   if (!matExp || typeof matExp.onCallback !== 'function') {
-    bot.sendMessage(msg.chat.id, 'Materialaufmaß-Experte nicht verfügbar.');
+    try {
+      matExp = require('./experten/materialaufmass');
+    } catch (e) {
+      // letzter Fallback: gar nichts
+    }
+  }
+  if (!matExp || typeof matExp.onCallback !== 'function') {
+    bot.sendMessage(msg.chat.id,
+      'Materialaufmaß-Experte nicht verfügbar. Bitte sag dem Admin, dass der Bot neu gestartet werden muss, damit der neue Code geladen wird.');
+    schreibeEintrag('Fehler', `Materialaufmaß-Experte fehlt beim /pdf-Befehl (${msg.chat.id}). Ladeexperten: ${experten.ladeExperten().map(e => e.id).join(', ') || '(leer)'}`);
     return;
   }
   const ergebnis = await matExp.onCallback(msg.chat.id, 'aufmass_pdf', { bot, schreibeEintrag });
