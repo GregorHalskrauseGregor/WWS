@@ -200,7 +200,7 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
 //      Maximal MAX_TOOL_ITER Iterationen.
 //   3) Wenn keine toolCalls mehr: finalen content zurückgeben (vorher durch den
 //      Output-Filter schicken).
-const MAX_TOOL_ITER = 5;
+const MAX_TOOL_ITER = 3;
 const TOOL_BESTAETIGUNG_TIMEOUT_MS = 60_000;
 
 // State für offene Tool-Bestätigungen. Key: confirmationId.
@@ -346,7 +346,11 @@ function messagesAktualisieren(messages, antwort, toolResults, providerName) {
         type: 'tool_result', tool_use_id: r.id, content: r.result
       }))
     });
-  } else if (providerName === 'openai') {
+  } else if (providerName === 'openai' || providerName === 'minimax') {
+    // OpenAI-kompatibles Format. MiniMax akzeptiert das gleiche Schema für
+    // tool_calls und tool-Role-Messages. Wichtig: das hier war der Bug, der
+    // zu Endlosschleifen geführt hat — ohne diesen Branch hat MiniMax die
+    // Tool-Results nie gesehen und immer wieder den gleichen Tool-Call gemacht.
     messages.push({
       role: 'assistant',
       content: antwort.content || null,
@@ -358,9 +362,10 @@ function messagesAktualisieren(messages, antwort, toolResults, providerName) {
     for (const r of toolResults) {
       messages.push({ role: 'tool', tool_call_id: r.id, content: r.result });
     }
-  } else {
-    // Sollte nicht passieren, weil Provider ohne Tool-Support gar keine Calls liefern.
   }
+  // Bei anderen Providern (z.B. zukünftige, die Tool-Use nicht können) wird
+  // schlicht nichts getan — der Bot bekommt die Tool-Results nicht zurück,
+  // aber das sollte nie passieren, weil wir vorher die Tool-Use-Fähigkeit prüfen.
 }
 
 // Globaler Callback-Handler für Inline-Keyboard-Klicks.
