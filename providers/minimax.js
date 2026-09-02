@@ -1,12 +1,14 @@
-// MiniMax-Provider. Erwartet MINIMAX_API_KEY und optional MINIMAX_MODEL.
-// MiniMax-M2 kann (Stand jetzt) keine Bilder verarbeiten -> klare Fehlermeldung statt stillem Fehlschlag.
-async function chat(systemPrompt, userMessage, bilder = []) {
-  if (bilder.length > 0) {
-    throw new Error(
-      'MiniMax unterstützt in dieser Anbindung keine Bilderkennung. ' +
-      'Für den Lieferschein-/Screenshot-Import AI_PROVIDER auf anthropic oder openai stellen.'
-    );
-  }
+// MiniMax-Provider. Erwartet MINIMAX_API_KEY und optional MINIMAX_MODEL bzw. MINIMAX_MODEL_LIGHT.
+// Reine Text-API. Bilder werden derzeit nicht unterstützt (OCR-Pfad läuft vorher über Mistral).
+const DEFAULT_MODEL = 'MiniMax-M2';
+const LIGHT_MODEL = 'MiniMax-M2-mini';
+
+async function chat(systemPrompt, userMessage, options = {}) {
+  const istLight = options.rolle === 'light';
+  const model = options.model
+    || (istLight ? process.env.MINIMAX_MODEL_LIGHT : process.env.MINIMAX_MODEL)
+    || (istLight ? LIGHT_MODEL : DEFAULT_MODEL);
+  const maxTokens = options.maxTokens || (istLight ? 500 : 2000);
 
   const res = await fetch('https://api.minimax.io/v1/text/chatcompletion_v2', {
     method: 'POST',
@@ -15,8 +17,8 @@ async function chat(systemPrompt, userMessage, bilder = []) {
       'Authorization': `Bearer ${process.env.MINIMAX_API_KEY}`
     },
     body: JSON.stringify({
-      model: process.env.MINIMAX_MODEL || 'MiniMax-M2',
-      max_tokens: 3000,
+      model,
+      max_tokens: maxTokens,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }
@@ -32,4 +34,4 @@ async function chat(systemPrompt, userMessage, bilder = []) {
   return data.choices?.[0]?.message?.content || '';
 }
 
-module.exports = { chat };
+module.exports = { chat, DEFAULT_MODEL, LIGHT_MODEL };

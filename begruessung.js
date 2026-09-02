@@ -1,43 +1,45 @@
-// Begrüßungs-/Anleitungstext, den der Bot bei /start schickt. Liegt als eigene Textdatei
-// vor, damit der Nutzer sie im Nachgang frei bearbeiten kann. Wird nur einmal mit einem
-// sinnvollen Standardtext angelegt, danach immer die aktuelle (ggf. bearbeitete) Version gelesen.
+// Begrüßungs-/Anleitungstext für /start. Liegt als eigene Textdatei, damit der
+// Nutzer sie im Nachgang frei bearbeiten kann. Wird einmal mit einem sinnvollen
+// Standardtext angelegt, danach immer die aktuelle (ggf. bearbeitete) Version gelesen.
 
 const fs = require('fs');
 const path = require('path');
 
 const BEGRUESSUNG_PATH = path.join(__dirname, 'data', 'begruessung.txt');
 
-const STANDARD_BEGRUESSUNG = `👋 Willkommen beim Material-Bot von Horst Zienert GmbH!
+const STANDARD_BEGRUESSUNG = `👋 Hallo! Ich bin dein KI-Chatbot.
 
-Ich verwalte den Lagerbestand für dich. Schreib mir einfach ganz normal, oder schick eine Sprachnachricht.
+Schreib mir einfach, schick eine Sprachnachricht, ein Foto, ein PDF oder eine Excel/Word-Datei. Ich verarbeite alles zu Text und antworte wie ein normaler Chatbot.
 
-📦 MATERIAL HINZUFÜGEN / ZURÜCKGEBEN
-"3 Kugelhahn DN20 hinzufügen"
-"Ich habe 5 Kugelhähne DN20 gebraucht zurückgebracht"
+📚 MEHRERE THEMEN GLEICHZEITIG
+Du kannst beliebig viele Themen parallel laufen lassen. Ich erkenne automatisch, ob eine Nachricht zu einem bestehenden Thema gehört oder ein neues eröffnet — du musst dich nicht ab- oder anmelden.
 
-🔧 MATERIAL ENTNEHMEN (wird verbaut/verbraucht, Bestand sinkt)
-"2 Kugelhahn DN20 entnehmen"
+🧠 LANGZEIT-GEDÄCHTNIS
+Fakten, die ich mir für die Zukunft merken soll, schreibst du so:
+  „merke dir: ich heiße Max, ich wohne in Berlin"
+Oder ich lege sie am Ende meiner Antwort als [MERKE: …] ab, wenn etwas Wichtiges auftaucht. /gedaechtnis zeigt alles, /vergiss <Nr> entfernt einen Eintrag.
 
-📋 MATERIALBEDARF PRÜFEN (verändert nichts, prüft nur)
-"Ich brauche 8 Kugelhahn DN20 für einen Auftrag"
+📎 DATEIEN
+- Foto / Screenshot: per OCR ausgelesen, dann normal verarbeitet
+- PDF: per OCR (Mistral) ausgelesen
+- Excel (.xlsx): direkt ausgelesen
+- Word (.docx): direkt ausgelesen
+- Sprache: per AssemblyAI transkribiert, EU-Endpunkt
 
-❓ BESTAND ABFRAGEN
-"Wie viel Kupferrohr 22mm haben wir?"
-"Zeig mir den kompletten Bestand"
-
-🧠 REGELN UND ARTIKELGRUPPEN MERKEN
-"Merke dir, dass alle Kugelhähne für Trinkwasser zugelassen sein müssen"
-"Fasse alle Rotguss-Kugelhähne für Heizung als 'Kugelhahn Heizung Rotguss' zusammen"
-
-📸 LIEFERSCHEIN / MATERIALLISTE EINLESEN
-Schick mir ein Foto, ein PDF, eine Excel- oder Word-Datei – ich lese die Positionen automatisch aus und trage sie ein.
-
-Befehle:
-/excel – aktuelle Materialliste als Datei
-/regeln – gemerkte Regeln anzeigen
-/gruppen – gemerkte Artikelgruppen anzeigen
-/protokoll – letzte Ereignisse/Fehler anzeigen
-/start – diese Anleitung erneut anzeigen`;
+BEFEHLE
+/start         diese Anleitung
+/themen        alle deine Themen auflisten
+/thema <Name>  voller Verlauf eines Themas
+/neu <Titel>   explizit ein neues Thema starten
+/umbenennen <alt> <neu>  Thema umbenennen
+/loeschen <Name>  Thema löschen
+/zusammenfassung [Name]  aktuelle KI-Zusammenfassung eines Themas
+/gedaechtnis  alle gemerkten Fakten
+/merke <Text> Fakt manuell hinzufügen
+/vergiss <Nr> Fakt entfernen (Nummer aus /gedaechtnis)
+/komprimieren  Verläufe/Gedächtnis manuell verdichten
+/user          deine Chat-ID und Statistik
+/protokoll     letzte Ereignisse/Fehler`;
 
 function ladeBegruessung() {
   if (!fs.existsSync(BEGRUESSUNG_PATH)) {

@@ -1,16 +1,14 @@
-// Anthropic-Provider. Erwartet ANTHROPIC_API_KEY und optional ANTHROPIC_MODEL.
-// Unterstützt Text UND Bilder (für Lieferschein-/Screenshot-Import).
-async function chat(systemPrompt, userMessage, bilder = []) {
-  let content = userMessage;
-  if (bilder.length > 0) {
-    content = [
-      ...bilder.map((b) => ({
-        type: 'image',
-        source: { type: 'base64', media_type: b.mimeType, data: b.base64 }
-      })),
-      { type: 'text', text: userMessage }
-    ];
-  }
+// Anthropic-Provider. Erwartet ANTHROPIC_API_KEY und optional ANTHROPIC_MODEL / ANTHROPIC_MODEL_LIGHT.
+// Reine Text-API in dieser Version (Bilder laufen vorher über Mistral OCR).
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const LIGHT_MODEL = 'claude-haiku-4-5';
+
+async function chat(systemPrompt, userMessage, options = {}) {
+  const istLight = options.rolle === 'light';
+  const model = options.model
+    || (istLight ? process.env.ANTHROPIC_MODEL_LIGHT : process.env.ANTHROPIC_MODEL)
+    || (istLight ? LIGHT_MODEL : DEFAULT_MODEL);
+  const maxTokens = options.maxTokens || (istLight ? 500 : 2000);
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -20,10 +18,10 @@ async function chat(systemPrompt, userMessage, bilder = []) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
-      max_tokens: 3000,
+      model,
+      max_tokens: maxTokens,
       system: systemPrompt,
-      messages: [{ role: 'user', content }]
+      messages: [{ role: 'user', content: userMessage }]
     })
   });
 
@@ -35,4 +33,4 @@ async function chat(systemPrompt, userMessage, bilder = []) {
   return data.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
 }
 
-module.exports = { chat };
+module.exports = { chat, DEFAULT_MODEL, LIGHT_MODEL };

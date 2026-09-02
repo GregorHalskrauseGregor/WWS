@@ -1,13 +1,33 @@
+// Telegram-Chatbot mit Themen-Verwaltung, Gedächtnis und Kontext-Komprimierung.
+//
+// Datenfluss pro eingehender Nachricht:
+//   1) Vorverarbeitung zu Text (OCR / Transkription / Datei-Auslese)
+//   2) Themen-Klassifikation per Light-Provider (gibt es ein passendes Thema?)
+//   3) Aktives Thema laden (oder neues anlegen)
+//   4) Kontext zusammenbauen (System-Rolle + Gedächtnis + Themen-Summary + Verlauf)
+//   5) Haupt-KI antworten lassen
+//   6) [MERKE: ...]-Hooks aus der Antwort rausfiltern und ins Gedächtnis schreiben
+//   7) Antwort an Telegram senden
+//   8) Nachricht ins Thema anhängen
+//   9) Komprimierung anstoßen, wenn Schwellen überschritten
+//
+// Multi-User: Jeder Telegram-Chat bekommt eigene Themen, eigenes Gedächtnis.
+
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const { getProvider } = require('./providers');
-const { addierePositionen, entnehmePositionen, pruefeBedarf, suchePositionen, gesamteListe, EXCEL_PATH } = require('./material');
 const { transkribiere } = require('./transcribe');
 const { mistralOCR } = require('./ocr');
 const { excelZuText, wordZuText } = require('./dokument');
-const { ladeRegeln, speichereRegel, ladeArtikelgruppen, speichereArtikelgruppe, REGELN_PATH, GRUPPEN_PATH } = require('./wissen');
+const themen = require('./themen');
+const gedaechtnis = require('./gedaechtnis');
+const kompressor = require('./kompressor');
+const kontext = require('./kontext');
 const { schreibeEintrag, leseLetzte } = require('./protokoll');
 const { ladeBegruessung } = require('./begruessung');
+
+// Telegram-Limit pro Nachricht. Wir teilen lange Antworten an Zeilenumbrüchen auf.
+const TELEGRAM_MAX = 3800;
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
@@ -16,439 +36,390 @@ if (!token) {
 }
 
 const bot = new TelegramBot(token, { polling: true });
-const provider = getProvider();
+const mainProvider = getProvider('main');
+const lightProvider = getProvider('light');
 
-// Telegram erlaubt max. 4096 Zeichen pro Nachricht. Teilt an Zeilenumbrüchen auf,
-// damit auch sehr lange Listen vollständig ankommen, statt gekappt zu werden.
-const TELEGRAM_MAX_LAENGE = 3800;
+// Wrapper, die die Provider-Rolle weitergeben, ohne den Aufrufer mit dem ganzen
+// Provider-Objekt zu belasten.
+async function mainChat(systemPrompt, userMessage, opts = {}) {
+  return mainProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'main' });
+}
+async function lightChat(systemPrompt, userMessage, opts = {}) {
+  return lightProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'light' });
+}
 
-async function sendeLangeNachricht(chatId, text) {
+async function sendeLang(chatId, text) {
+  if (!text) return 1;
   const zeilen = text.split('\n');
   const bloecke = [];
-  let aktuellerBlock = '';
-
-  for (const zeile of zeilen) {
-    const kandidat = aktuellerBlock ? aktuellerBlock + '\n' + zeile : zeile;
-    if (kandidat.length > TELEGRAM_MAX_LAENGE) {
-      if (aktuellerBlock) bloecke.push(aktuellerBlock);
-      aktuellerBlock = zeile;
+  let block = '';
+  for (const z of zeilen) {
+    const kandidat = block ? block + '\n' + z : z;
+    if (kandidat.length > TELEGRAM_MAX) {
+      if (block) bloecke.push(block);
+      block = z;
     } else {
-      aktuellerBlock = kandidat;
+      block = kandidat;
     }
   }
-  if (aktuellerBlock) bloecke.push(aktuellerBlock);
-
-  for (const block of bloecke) {
-    await bot.sendMessage(chatId, block);
+  if (block) bloecke.push(block);
+  for (const b of bloecke) {
+    await bot.sendMessage(chatId, b);
   }
   return bloecke.length;
 }
 
-// Für den Dokumenten-Import: teilt sehr langen ausgelesenen Text (z. B. aus einer Excel-Datei
-// mit hunderten Zeilen) in mehrere Häppchen auf, damit die KI-Anfrage nicht am Token-Limit
-// scheitert. Jeder Häppchen bekommt die zuletzt gesehene "Tabellenblatt:"-Zeile + Kopfzeile
-// erneut vorangestellt, damit die Spaltenbedeutung erhalten bleibt.
-const ZEILEN_PRO_CHUNK = 40;
-
-function teileTextInChunks(text, zeilenProChunk = ZEILEN_PRO_CHUNK) {
-  const alleZeilen = text.split('\n');
-  const chunks = [];
-  let headerZeilen = [];
-  let puffer = [];
-
-  const chunkAbschliessen = () => {
-    if (puffer.length > headerZeilen.length || (puffer.length > 0 && headerZeilen.length === 0)) {
-      chunks.push(puffer.join('\n'));
-    }
-    puffer = [...headerZeilen];
-  };
-
-  for (let i = 0; i < alleZeilen.length; i++) {
-    const zeile = alleZeilen[i];
-
-    if (zeile.startsWith('Tabellenblatt:')) {
-      chunkAbschliessen();
-      headerZeilen = [zeile];
-      if (alleZeilen[i + 1] !== undefined) {
-        headerZeilen.push(alleZeilen[i + 1]);
-        i++;
-      }
-      puffer = [...headerZeilen];
-      continue;
-    }
-
-    puffer.push(zeile);
-    const datenZeilenImPuffer = puffer.length - headerZeilen.length;
-    if (datenZeilenImPuffer >= zeilenProChunk) {
-      chunkAbschliessen();
-    }
-  }
-  if (puffer.length > headerZeilen.length) {
-    chunks.push(puffer.join('\n'));
-  }
-
-  return chunks.map((c) => c.trim()).filter((c) => c.length > 0);
-}
-
-// Feste Kategorienliste, damit die Einordnung über Hunderte/Tausende Positionen konsistent bleibt.
-// Zentral in kategorien.js definiert, wird auch von der hübschen Excel-Ansicht (ansicht.js) genutzt.
-const { KATEGORIEN } = require('./kategorien');
-
-// Baut den Systemprompt jedes Mal neu auf, damit zuletzt gemerkte Regeln/Artikelgruppen sofort greifen.
-function baueSystemPrompt() {
-  const regeln = ladeRegeln();
-  const gruppen = ladeArtikelgruppen();
-
-  let prompt = `Du wandelst Nachrichten eines Handwerkers über Materialpositionen in strukturierte Daten um.
-Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, ohne zusätzlichen Text davor oder danach, in genau einer dieser Formen:
-
-{"aktion":"hinzufuegen","positionen":[{"bezeichnung":"Kugelhahn DN20","menge":3,"einheit":"Stück","zustand":"neu","kategorie":"Armaturen & Ventile"}]}
-{"aktion":"entnehmen","positionen":[{"bezeichnung":"Kugelhahn DN20","menge":2,"einheit":"Stück","zustand":"neu"}]}
-{"aktion":"materialbedarf","positionen":[{"bezeichnung":"Kugelhahn DN20","menge":5}]}
-{"aktion":"abfrage","suchbegriff":"Kugelhahn"}
-{"aktion":"liste"}
-{"aktion":"regel_merken","regel":"Formulierte Regel als vollständiger Satz"}
-{"aktion":"artikelgruppe_merken","gruppe":"Formulierte Gruppierungsregel als vollständiger Satz"}
-{"aktion":"protokoll_abfrage"}
-
-Bedeutung der Aktionen:
-- "hinzufuegen": Material kommt neu dazu, wird geliefert, eingelagert ODER von einem Monteur in die Firma zurückgegeben/eingesortiert. Bei Rückgabe durch einen Monteur "zustand" anhand der Beschreibung wählen: "gebraucht" bei normal gebrauchtem, funktionsfähigem Material, "verschmutzt" wenn der Monteur Verschmutzung/verunreinigt/dreckig o. Ä. erwähnt, sonst "neu" (z. B. bei neuwertig/ungebraucht oder wenn nichts zum Zustand gesagt wird).
-- "entnehmen": Material wird tatsächlich verbraucht, verbaut oder mitgenommen (Bestand sinkt sofort)
-- "materialbedarf": Ein Monteur benötigt Material für einen Einsatz und fragt, was davon im Lager vorhanden ist. WICHTIG: Diese Aktion verändert den Bestand NICHT, sie prüft nur. Erkennbar an Formulierungen wie "Ich brauche ...", "Für den Einsatz benötige ich ...", "Haben wir ... für einen Auftrag da?"
-- "abfrage": einfache Frage, ob/wie viel von einer Position insgesamt vorhanden ist
-- "liste": Frage nach dem kompletten Bestand
-- "regel_merken": Der Nutzer bittet ausdrücklich darum, sich eine Regel dauerhaft zu merken (z. B. "Merke dir, dass ...", "Neue Regel: ...")
-- "artikelgruppe_merken": Der Nutzer bittet ausdrücklich darum, mehrere ähnliche Artikel unter einem gemeinsamen Sammelbegriff zusammenzufassen
-- "protokoll_abfrage": Der Nutzer fragt nach kürzlich aufgetretenen Fehlern, Problemen, oder was zuletzt passiert ist (z. B. "warum wurde X nicht hinzugefügt?", "gab es Fehler beim Import?", "was ist zuletzt schiefgelaufen?", "was wurde zuletzt gemacht?"). WICHTIG: nutze diese Aktion IMMER, wenn eine Nachricht nicht eindeutig in eine der anderen Aktionen passt (z. B. allgemeine Rückfragen zu vorherigen Aktionen) – rate NICHT stattdessen bei "abfrage" oder anderen Aktionen, wenn die Nachricht nicht klar eine konkrete Materialposition/-menge nennt
-
-Allgemeine Regeln:
-- "einheit" ist optional, Standard ist "Stück"
-- "zustand" ist optional bei "hinzufuegen"/"entnehmen", nur "neu", "gebraucht" oder "verschmutzt", Standard ist "neu"
-- "kategorie" bei "hinzufuegen": IMMER eine der folgenden festen Kategorien wählen, die inhaltlich am besten passt: ${KATEGORIEN.join(', ')}. Bei Unsicherheit "Sonstiges" verwenden. Bei "entnehmen"/"abfrage"/"materialbedarf" wird "kategorie" nicht benötigt.
-- Zahlwörter in Ziffern umwandeln (z. B. "drei" -> 3)
-- Text kommt oft aus Spracherkennung/Diktat -> offensichtliche Erkennungsfehler sinnvoll interpretieren
-- Bei "hinzufuegen"/"entnehmen"/"abfrage"/"materialbedarf": wenn eine Artikelgruppe unten die genannte Variante abdeckt, IMMER den dort festgelegten Sammelbegriff als "bezeichnung" verwenden, nicht die Variante selbst`;
-
-  if (gruppen) {
-    prompt += `\n\nBekannte Artikelgruppen (Varianten auf den jeweiligen Sammelbegriff normalisieren):\n${gruppen}`;
-  }
-  if (regeln) {
-    prompt += `\n\nZusätzliche vom Nutzer festgelegte Regeln, die IMMER zu beachten sind:\n${regeln}`;
-  }
-
-  return prompt;
-}
-
-// Verarbeitet einen (bereits vorliegenden) Text-String, egal ob getippt oder transkribiert.
-async function verarbeiteText(chatId, text) {
+// "tippt..." Indikator, damit der Nutzer sieht, dass was passiert.
+async function mitTipptIndikator(chatId, fn) {
   try {
-    const raw = await provider.chat(baueSystemPrompt(), text);
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      bot.sendMessage(chatId, 'Konnte die Nachricht nicht auswerten. Bitte anders formulieren.');
-      return;
-    }
-    const intent = JSON.parse(jsonMatch[0]);
-
-    if (intent.aktion === 'hinzufuegen') {
-      const ergebnisse = await addierePositionen(intent.positionen);
-      const antwortText = ergebnisse
-        .map((e) => `${e.bezeichnung} [${e.kategorie}] (${e.zustand}): jetzt ${e.menge} ${e.einheit}`)
-        .join('\n');
-      bot.sendMessage(chatId, 'Eingetragen:\n' + antwortText);
-    } else if (intent.aktion === 'entnehmen') {
-      const ergebnisse = await entnehmePositionen(intent.positionen);
-      const antwortText = ergebnisse
-        .map((e) => {
-          if (e.unbekannt) {
-            return `${e.bezeichnung} (${e.zustand}): war nicht in der Liste, nichts entnommen`;
-          }
-          if (e.fehlend > 0) {
-            return `${e.bezeichnung} (${e.zustand}): ${e.entnommen} entnommen, ${e.fehlend} fehlten (Bestand jetzt 0)`;
-          }
-          return `${e.bezeichnung} (${e.zustand}): ${e.entnommen} entnommen, jetzt noch ${e.neueMenge} ${e.einheit || ''}`;
-        })
-        .join('\n');
-      bot.sendMessage(chatId, antwortText);
-    } else if (intent.aktion === 'materialbedarf') {
-      const ergebnisse = await pruefeBedarf(intent.positionen);
-      const verfuegbarZeilen = ergebnisse
-        .filter((e) => e.verfuegbar > 0)
-        .map((e) => `${e.bezeichnung}: ${e.verfuegbar} von ${e.angefragt} da (Lager gesamt: ${e.gesamtBestand} ${e.einheit})`);
-      const fehlendZeilen = ergebnisse
-        .filter((e) => e.fehlend > 0)
-        .map((e) => `${e.bezeichnung}: ${e.fehlend} ${e.einheit} fehlen`);
-
-      let antwort = '';
-      if (verfuegbarZeilen.length > 0) {
-        antwort += 'Aus dem Lager verfügbar:\n' + verfuegbarZeilen.join('\n');
-      }
-      if (fehlendZeilen.length > 0) {
-        antwort += (antwort ? '\n\n' : '') + 'Muss bestellt werden:\n' + fehlendZeilen.join('\n');
-      }
-      bot.sendMessage(chatId, antwort || 'Nichts von den angefragten Positionen ist vorrätig.');
-    } else if (intent.aktion === 'abfrage') {
-      const treffer = await suchePositionen(intent.suchbegriff);
-      if (treffer.length === 0) {
-        bot.sendMessage(chatId, `Keine Position gefunden zu "${intent.suchbegriff}".`);
-      } else {
-        const antwortText = treffer
-          .map((t) => `${t.bezeichnung} [${t.kategorie}]: neu ${t.mengeNeu}, gebraucht ${t.mengeGebraucht}, verschmutzt ${t.mengeVerschmutzt} (${t.einheit})`)
-          .join('\n');
-        await sendeLangeNachricht(chatId, antwortText);
-      }
-    } else if (intent.aktion === 'liste') {
-      const alle = await gesamteListe();
-      if (alle.length === 0) {
-        bot.sendMessage(chatId, 'Die Materialliste ist noch leer.');
-      } else {
-        const gruppen = {};
-        for (const t of alle) {
-          if (!gruppen[t.kategorie]) gruppen[t.kategorie] = [];
-          gruppen[t.kategorie].push(t);
-        }
-
-        const antwortText = Object.entries(gruppen)
-          .map(([kategorie, artikel]) => {
-            const zeilen = artikel
-              .map((t) => `  ${t.bezeichnung}: neu ${t.mengeNeu}, gebraucht ${t.mengeGebraucht}, verschmutzt ${t.mengeVerschmutzt} (${t.einheit})`)
-              .join('\n');
-            return `${kategorie}:\n${zeilen}`;
-          })
-          .join('\n\n');
-
-        const anzahlNachrichten = await sendeLangeNachricht(chatId, antwortText);
-
-        // Musste die Liste auf mehrere Nachrichten aufgeteilt werden -> zusätzlich die Excel-Datei
-        // mitschicken, das ist zum Durchsuchen/Filtern oft praktischer als viele Textnachrichten.
-        if (anzahlNachrichten > 1) {
-          bot.sendDocument(chatId, EXCEL_PATH);
-        }
-      }
-    } else if (intent.aktion === 'regel_merken') {
-      speichereRegel(intent.regel);
-      bot.sendMessage(chatId, `Regel gemerkt: "${intent.regel}"`);
-    } else if (intent.aktion === 'artikelgruppe_merken') {
-      speichereArtikelgruppe(intent.gruppe);
-      bot.sendMessage(chatId, `Artikelgruppe gemerkt: "${intent.gruppe}"`);
-    } else if (intent.aktion === 'protokoll_abfrage') {
-      const eintraege = leseLetzte(20);
-      if (!eintraege) {
-        bot.sendMessage(chatId, 'Das Protokoll ist noch leer.');
-      } else {
-        await sendeLangeNachricht(chatId, 'Letzte Protokoll-Einträge:\n' + eintraege);
-      }
-    } else {
-      bot.sendMessage(chatId, 'Aktion nicht erkannt.');
-    }
-  } catch (err) {
-    console.error(err);
-    schreibeEintrag('Fehler', `Nachricht "${text}" konnte nicht verarbeitet werden: ${err.message}`);
-    bot.sendMessage(chatId, 'Fehler bei der Verarbeitung: ' + err.message);
-  }
+    await bot.sendChatAction(chatId, 'typing');
+  } catch { /* nicht alle Chats unterstützen das, egal */ }
+  return fn();
 }
 
-// Extrahiert Materialpositionen aus bereits vorliegendem Text (egal ob per OCR aus einem
-// Foto/PDF gewonnen, oder direkt aus Excel/Word ausgelesen). Läuft rein textbasiert ->
-// funktioniert mit JEDEM AI_PROVIDER, auch MiniMax, keine Bilderkennung nötig.
-async function extrahierePositionenAusText(inhalt) {
-  const systemPrompt = `Du liest den ausgelesenen Inhalt eines Lieferscheins, einer Materialliste,
-einer Excel-Tabelle oder eines Word-Dokuments aus (als Text/Markdown bereits extrahiert).
-Erkenne ALLE aufgeführten Materialpositionen mit Menge und, falls erkennbar, Einheit.
-Antworte AUSSCHLIESSLICH mit einem JSON-Objekt in genau dieser Form, ohne zusätzlichen Text:
-
-{"positionen":[{"bezeichnung":"...","menge":5,"einheit":"Stück","kategorie":"..."}]}
-
-Regeln:
-- "einheit" ist optional, Standard ist "Stück"
-- "kategorie": IMMER eine der folgenden festen Kategorien wählen, die inhaltlich am besten passt: ${KATEGORIEN.join(', ')}. Bei Unsicherheit "Sonstiges" verwenden.
-- Neu geliefertes/importiertes Material gilt als Zustand "neu" (automatisch gesetzt, nicht ins JSON aufnehmen)
-- Wenn eine Menge nicht eindeutig lesbar ist, überspringe die Position lieber, als zu raten
-- Kopf-/Fußzeilen, Firmenadressen, Bestellnummern, Summenzeilen, Tabellenüberschriften etc. sind KEINE Materialpositionen, nur echte Artikelzeilen erfassen
-- WICHTIG für gültiges JSON: Zollangaben mit dem Zoll-Zeichen (") IMMER als "Zoll" ausschreiben, z. B. "1/2 Zoll" statt "1/2"" – das Zoll-Zeichen bricht sonst das JSON-Format. Auch sonst KEINE unmaskierten Anführungszeichen innerhalb von Textwerten verwenden.`;
-
-  async function versuch(zusatzHinweis) {
-    const raw = await provider.chat(systemPrompt + zusatzHinweis, inhalt);
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Konnte keine Positionen im Dokument erkennen.');
-    }
-    const daten = JSON.parse(jsonMatch[0]); // wirft bei ungültigem JSON, wird unten abgefangen
-    return daten.positionen || [];
+// Extrahiert [MERKE: ...]-Zeilen aus einer KI-Antwort. Gibt {sichtbar, merkeFakt}
+// zurück. Mehrere MERKE-Zeilen werden zu einer kommaseparierten Zeile zusammengeführt.
+function extrahiereMerkeHooks(antwort) {
+  if (!antwort) return { sichtbar: '', merkeFakt: null };
+  const zeilen = antwort.split('\n');
+  const merkeZeilen = [];
+  const sichtbarZeilen = [];
+  for (const z of zeilen) {
+    const m = z.match(/^\s*\[MERKE:\s*(.+?)\s*\]\s*$/i);
+    if (m) merkeZeilen.push(m[1].trim());
+    else sichtbarZeilen.push(z);
   }
-
-  try {
-    return await versuch('');
-  } catch (err) {
-    // Ein Fehlversuch mit ungültigem JSON wird einmal mit schärferer Erinnerung wiederholt,
-    // bevor der Abschnitt endgültig als fehlerhaft gilt.
-    if (err instanceof SyntaxError) {
-      return await versuch(
-        '\n\nACHTUNG: Deine letzte Antwort enthielt ungültiges JSON (vermutlich durch ein unmaskiertes Anführungszeichen, z. B. bei einer Zollangabe). Achte diesmal besonders genau darauf: keine rohen " innerhalb von Textwerten, Zoll immer ausschreiben.'
-      );
-    }
-    throw err;
-  }
+  const merkeFakt = merkeZeilen.length ? merkeZeilen.join('; ') : null;
+  return { sichtbar: sichtbarZeilen.join('\n').trim(), merkeFakt };
 }
 
-// Verarbeitet auch sehr langen Text zuverlässig: teilt in Häppchen auf, verarbeitet
-// nacheinander, führt die Ergebnisse zusammen. Ein fehlerhafter Häppchen bricht den
-// gesamten Import nicht ab, sondern wird übersprungen und gemeldet.
-async function extrahierePositionenAusGrossemText(text, chatId) {
-  const chunks = teileTextInChunks(text);
-  const allePositionen = [];
-
-  for (let i = 0; i < chunks.length; i++) {
-    if (chunks.length > 1) {
-      bot.sendMessage(chatId, `Werte Abschnitt ${i + 1} von ${chunks.length} aus …`);
+// Zentrale Verarbeitung: von (bereits vorliegendem) Text bis zur KI-Antwort.
+async function verarbeiteText(chatId, userText, dokInhalt = '') {
+  // 1) Themen-Klassifikation per Light-Provider
+  const klassifikation = await kontext.klassifiziereThema(lightChat, chatId, userText);
+  let thema;
+  if (klassifikation.themaId) {
+    thema = themen.ladeThema(chatId, klassifikation.themaId);
+    if (!thema) {
+      // Inkonsistenz: Index kennt das Thema, Datei fehlt. Neu anlegen.
+      thema = themen.erstelleThema(chatId, klassifikation.neuName || 'Wiederhergestelltes Thema');
     }
-    try {
-      const positionen = await extrahierePositionenAusText(chunks[i]);
-      allePositionen.push(...positionen);
-    } catch (err) {
-      console.error(`Fehler bei Abschnitt ${i + 1}:`, err);
-      schreibeEintrag('Fehler', `Abschnitt ${i + 1}/${chunks.length} beim Import konnte nicht ausgewertet werden: ${err.message}`);
-      bot.sendMessage(chatId, `Abschnitt ${i + 1} konnte nicht ausgewertet werden, wird übersprungen: ${err.message}`);
-    }
-  }
-
-  return allePositionen;
-}
-
-// Zentraler Dateityp-Router: Fotos/Screenshots/PDF -> Mistral OCR -> Text.
-// Excel/Word -> direktes Auslesen, kein OCR nötig. Danach in beiden Fällen derselbe letzte Schritt.
-async function importiereAusDatei(buffer, mimeType, chatId) {
-  let text;
-
-  if (mimeType.startsWith('image/') || mimeType === 'application/pdf') {
-    bot.sendMessage(chatId, 'Dokument wird per OCR ausgelesen …');
-    const base64 = buffer.toString('base64');
-    text = await mistralOCR(base64, mimeType);
-  } else if (
-    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    mimeType === 'application/vnd.ms-excel'
-  ) {
-    bot.sendMessage(chatId, 'Excel-Datei wird ausgelesen …');
-    text = await excelZuText(buffer);
-  } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-    bot.sendMessage(chatId, 'Word-Dokument wird ausgelesen …');
-    text = await wordZuText(buffer);
   } else {
-    bot.sendMessage(chatId, `Dateityp "${mimeType}" wird nicht unterstützt. Unterstützt: Fotos, PDF, .xlsx, .docx.`);
-    return;
+    thema = themen.erstelleThema(chatId, klassifikation.neuName || kontext.leiteThemaNamenAb(userText));
   }
 
-  if (!text || !text.trim()) {
-    bot.sendMessage(chatId, 'Es konnte kein Text aus der Datei extrahiert werden.');
-    return;
+  // 2) Kontext aufbauen
+  const gedaechtnisText = gedaechtnis.ladeGedaechtnis(chatId);
+  const systemPrompt = kontext.baueHauptSystemPrompt(gedaechtnisText);
+  const messages = kontext.baueHauptMessages(thema, userText, dokInhalt);
+
+  // 3) Haupt-KI-Antwort (eine chat-Anfrage, die alle Messages als Verlauf bekommt)
+  const raw = await mainChatMultiMessage(systemPrompt, messages);
+
+  const { sichtbar, merkeFakt } = extrahiereMerkeHooks(raw);
+
+  // 4) MERKE-Hook ins Gedächtnis schieben
+  let merkeHinweis = '';
+  if (merkeFakt) {
+    const ok = gedaechtnis.fuegeHinzu(chatId, merkeFakt);
+    if (ok) merkeHinweis = '\n\n_gemerkt: ' + merkeFakt + '_';
   }
 
-  const positionen = await extrahierePositionenAusGrossemText(text, chatId);
-  if (positionen.length === 0) {
-    bot.sendMessage(chatId, 'Es wurden keine Materialpositionen erkannt.');
-    return;
-  }
+  // 5) Senden
+  const text = (sichtbar || '(keine Antwort)') + merkeHinweis;
+  await sendeLang(chatId, text);
 
-  const ergebnisse = await addierePositionen(positionen);
-  schreibeEintrag('Import', `${ergebnisse.length} Position(en) importiert`);
-  const antwortText = ergebnisse
-    .map((e) => `${e.bezeichnung} [${e.kategorie}] (${e.zustand}): jetzt ${e.menge} ${e.einheit}`)
+  // 6) In Themen-Historie anhängen
+  themen.haengeNachrichtAn(chatId, thema.id, 'user', userText);
+  themen.haengeNachrichtAn(chatId, thema.id, 'assistant', sichtbar || '');
+
+  // 7) Komprimierung im Hintergrund (blockiert den User nicht)
+  komprimiereWennNoetig(chatId, thema.id).catch((err) => {
+    schreibeEintrag('Fehler', `Komprimierung fehlgeschlagen (${thema.id}): ${err.message}`);
+  });
+}
+
+// Multi-Message-Chat: die Provider haben aktuell eine 2-Argument-Signatur
+// (systemPrompt, userMessage). Wir setzen hier die Messages zu einem einzigen
+// user-String zusammen, der die vorherigen Turns als Kontext einbaut.
+// (Erweiterung auf native Multi-Message pro Provider bleibt für später.)
+async function mainChatMultiMessage(systemPrompt, messages) {
+  if (messages.length === 0) return '';
+  const letzte = messages[messages.length - 1];
+  const vorherige = messages.slice(0, -1);
+  if (vorherige.length === 0) {
+    return mainChat(systemPrompt, letzte.content);
+  }
+  // Vorherige Messages werden kompakt als "Bisheriger Verlauf:" zusammengefasst.
+  // Die letzte Message ist die eigentliche Frage.
+  const block = vorherige
+    .map((m) => {
+      const wer = m.role === 'assistant' ? 'Assistent' : 'Nutzer';
+      return `${wer}: ${m.content}`;
+    })
     .join('\n');
-  const anzahlNachrichten = await sendeLangeNachricht(chatId, `${ergebnisse.length} Position(en) eingetragen:\n` + antwortText);
+  const kombi = `Bisheriger Verlauf in diesem Thema:
+"""
+${block}
+"""
 
-  if (anzahlNachrichten > 1) {
-    bot.sendDocument(chatId, EXCEL_PATH);
+Aktuelle Nutzernachricht:
+"""
+${letzte.content}
+"""`;
+  return mainChat(systemPrompt, kombi);
+}
+
+async function komprimiereWennNoetig(chatId, themaId) {
+  const t = themen.ladeThema(chatId, themaId);
+  if (t && kompressor.themaBereitZurKomprimierung(t)) {
+    await kompressor.komprimiereThema(chatId, themaId, lightChat);
+  }
+  if (gedaechtnis.istVoll(chatId)) {
+    await kompressor.komprimiereGedaechtnis(chatId, lightChat);
   }
 }
 
+// ----------------- Input-Handler -----------------
+
+// Text -> sofort verarbeiten
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-
-  // Getippte Nachricht (inkl. Text, der auf dem Handy per Diktierfunktion eingetippt wurde)
   if (msg.text) {
-    // Befehle (/excel, /regeln, /gruppen, /protokoll, /start) laufen über eigene
-    // onText-Handler weiter unten -> hier nicht zusätzlich als Materialkommando interpretieren
-    if (msg.text.trim().startsWith('/')) {
-      return;
+    const text = msg.text.trim();
+    if (text.startsWith('/')) return; // Commands laufen über onText-Handler
+    try {
+      await mitTipptIndikator(chatId, () => verarbeiteText(chatId, text));
+    } catch (err) {
+      console.error(err);
+      schreibeEintrag('Fehler', `Text-Nachricht: ${err.message}`);
+      bot.sendMessage(chatId, 'Fehler bei der Verarbeitung: ' + err.message);
     }
-    await verarbeiteText(chatId, msg.text);
     return;
   }
 
-  // Telegram-Sprachnachricht (aufgenommenes Audio)
   if (msg.voice) {
     try {
-      bot.sendMessage(chatId, 'Sprachnachricht wird transkribiert, bei längeren Aufnahmen kann das etwas dauern …');
-      const fileLink = await bot.getFileLink(msg.voice.file_id);
-      const audioRes = await fetch(fileLink);
-      const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
-
-      const text = await transkribiere(audioBuffer);
-      bot.sendMessage(chatId, `Verstanden: "${text}"`);
-      await verarbeiteText(chatId, text);
+      await mitTipptIndikator(chatId, async () => {
+        await bot.sendMessage(chatId, 'Sprachnachricht wird transkribiert …');
+        const link = await bot.getFileLink(msg.voice.file_id);
+        const res = await fetch(link);
+        const buf = Buffer.from(await res.arrayBuffer());
+        const text = await transkribiere(buf);
+        await bot.sendMessage(chatId, `Verstanden: „${text}"`);
+        await verarbeiteText(chatId, text);
+      });
     } catch (err) {
       console.error(err);
+      schreibeEintrag('Fehler', `Sprachnachricht: ${err.message}`);
       bot.sendMessage(chatId, 'Fehler bei der Spracherkennung: ' + err.message);
     }
     return;
   }
 
-  // Foto (Lieferschein, Screenshot einer Materialliste, handschriftliche Liste)
   if (msg.photo) {
     try {
-      const besteAufloesung = msg.photo[msg.photo.length - 1];
-      const fileLink = await bot.getFileLink(besteAufloesung.file_id);
-      const bildRes = await fetch(fileLink);
-      const bildBuffer = Buffer.from(await bildRes.arrayBuffer());
-      await importiereAusDatei(bildBuffer, 'image/jpeg', chatId);
+      await mitTipptIndikator(chatId, async () => {
+        const bestes = msg.photo[msg.photo.length - 1];
+        const link = await bot.getFileLink(bestes.file_id);
+        const res = await fetch(link);
+        const buf = Buffer.from(await res.arrayBuffer());
+        await importiereUndVerarbeite(buf, 'image/jpeg', chatId, 'Bild');
+      });
     } catch (err) {
       console.error(err);
-      bot.sendMessage(chatId, 'Fehler bei der Dateiauswertung: ' + err.message);
+      schreibeEintrag('Fehler', `Foto: ${err.message}`);
+      bot.sendMessage(chatId, 'Fehler bei der Bildauswertung: ' + err.message);
     }
     return;
   }
 
-  // Datei-Upload (PDF, .xlsx, .docx, oder ein Foto, das als Datei statt komprimiert geschickt wurde)
   if (msg.document) {
     try {
-      const fileLink = await bot.getFileLink(msg.document.file_id);
-      const dateiRes = await fetch(fileLink);
-      const dateiBuffer = Buffer.from(await dateiRes.arrayBuffer());
-      await importiereAusDatei(dateiBuffer, msg.document.mime_type, chatId);
+      await mitTipptIndikator(chatId, async () => {
+        const link = await bot.getFileLink(msg.document.file_id);
+        const res = await fetch(link);
+        const buf = Buffer.from(await res.arrayBuffer());
+        await importiereUndVerarbeite(buf, msg.document.mime_type, chatId, 'Datei');
+      });
     } catch (err) {
       console.error(err);
+      schreibeEintrag('Fehler', `Datei: ${err.message}`);
       bot.sendMessage(chatId, 'Fehler bei der Dateiauswertung: ' + err.message);
     }
   }
 });
 
-// /excel gibt die aktuelle Datei direkt im Chat aus
-bot.onText(/\/excel/, (msg) => {
-  bot.sendDocument(msg.chat.id, EXCEL_PATH);
-});
+// Foto / PDF / Excel / Word -> Text extrahieren -> normal weiterverarbeiten.
+async function importiereUndVerarbeite(buffer, mimeType, chatId, label) {
+  let text;
+  if (mimeType && mimeType.startsWith('image/')) {
+    await bot.sendMessage(chatId, `${label} wird per OCR ausgelesen …`);
+    text = await mistralOCR(buffer.toString('base64'), mimeType);
+  } else if (mimeType === 'application/pdf') {
+    await bot.sendMessage(chatId, 'PDF wird per OCR ausgelesen …');
+    text = await mistralOCR(buffer.toString('base64'), mimeType);
+  } else if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mimeType === 'application/vnd.ms-excel'
+  ) {
+    await bot.sendMessage(chatId, 'Excel-Datei wird ausgelesen …');
+    text = await excelZuText(buffer);
+  } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    await bot.sendMessage(chatId, 'Word-Datei wird ausgelesen …');
+    text = await wordZuText(buffer);
+  } else {
+    bot.sendMessage(chatId, `Dateityp „${mimeType}" wird nicht unterstützt. Fotos, PDF, .xlsx, .docx gehen.`);
+    return;
+  }
+  if (!text || !text.trim()) {
+    bot.sendMessage(chatId, 'Es konnte kein Text aus der Datei extrahiert werden.');
+    return;
+  }
+  // Kurze Rückmeldung, was extrahiert wurde (gekürzt), damit der Nutzer sieht, dass die
+  // Vorverarbeitung geklappt hat.
+  const vorschau = text.length > 300 ? text.slice(0, 300) + '…' : text;
+  await bot.sendMessage(chatId, `Extrahierter Text (Vorschau):\n${vorschau}`);
+  await verarbeiteText(chatId, 'Bitte lies die beigefügte Datei und beantworte/antworte darauf.', text);
+}
 
-// /regeln zeigt die aktuell gemerkten Regeln
-bot.onText(/\/regeln/, (msg) => {
-  const regeln = ladeRegeln();
-  bot.sendMessage(msg.chat.id, regeln || 'Noch keine Regeln gemerkt.');
-});
+// ----------------- Commands -----------------
 
-// /gruppen zeigt die aktuell gemerkten Artikelgruppen
-bot.onText(/\/gruppen/, (msg) => {
-  const gruppen = ladeArtikelgruppen();
-  bot.sendMessage(msg.chat.id, gruppen || 'Noch keine Artikelgruppen gemerkt.');
-});
-
-// /protokoll zeigt die letzten Ereignisse/Fehler
-bot.onText(/\/protokoll/, (msg) => {
-  const eintraege = leseLetzte(20);
-  bot.sendMessage(msg.chat.id, eintraege || 'Das Protokoll ist noch leer.');
-});
-
-// /start begrüßt mit einer Kurzanleitung (Inhalt liegt editierbar in data/begruessung.txt)
 bot.onText(/\/start/, async (msg) => {
-  const text = ladeBegruessung();
-  await sendeLangeNachricht(msg.chat.id, text);
+  await sendeLang(msg.chat.id, ladeBegruessung());
+});
+
+bot.onText(/\/themen/, (msg) => {
+  const index = themen.ladeIndex(msg.chat.id);
+  if (index.length === 0) {
+    bot.sendMessage(msg.chat.id, 'Du hast noch keine Themen. Schreib einfach los — das erste Thema wird automatisch angelegt.');
+    return;
+  }
+  const zeilen = index.map((t, i) => {
+    const datum = (t.lastActivity || '').slice(0, 16).replace('T', ' ');
+    return `${i + 1}. ${t.name}  (${t.messageCount} Nachrichten, zuletzt ${datum})`;
+  });
+  bot.sendMessage(msg.chat.id, 'Deine Themen:\n' + zeilen.join('\n'));
+});
+
+bot.onText(/\/neu(?:\s+(.+))?/, async (msg, match) => {
+  const name = (match && match[1] && match[1].trim()) || 'Neues Thema';
+  const thema = themen.erstelleThema(msg.chat.id, name);
+  bot.sendMessage(msg.chat.id, `Neues Thema „${thema.name}" angelegt. Du kannst jetzt reinschreiben.`);
+});
+
+bot.onText(/\/thema(?:\s+(.+))?/, (msg, match) => {
+  const suche = match && match[1] && match[1].trim();
+  if (!suche) {
+    bot.sendMessage(msg.chat.id, 'Benutzung: /thema <Name-oder-Teil-des-Namens>');
+    return;
+  }
+  const t = themen.findeThemaMitName(msg.chat.id, suche);
+  if (!t) {
+    bot.sendMessage(msg.chat.id, `Kein Thema mit „${suche}" gefunden. /themen zeigt alle.`);
+    return;
+  }
+  // "Aktives Thema" ist hier informell — die Themen-Zuordnung passiert ohnehin
+  // automatisch pro Nachricht. Dieser Command zeigt vor allem den vollen Verlauf.
+  const voll = themen.ladeThema(msg.chat.id, t.id);
+  if (!voll || !Array.isArray(voll.messages) || voll.messages.length === 0) {
+    bot.sendMessage(msg.chat.id, `Thema „${t.name}" ist noch leer.`);
+    return;
+  }
+  const zeilen = voll.messages.map((m) => {
+    const wer = m.rolle === 'user' ? 'Du' : 'Bot';
+    const zeit = (m.zeit || '').slice(0, 16).replace('T', ' ');
+    return `[${zeit}] ${wer}: ${m.inhalt}`;
+  });
+  sendeLang(msg.chat.id, `Verlauf von „${t.name}":\n` + zeilen.join('\n'));
+});
+
+bot.onText(/\/umbenennen\s+(\S+)\s+(.+)/, (msg, match) => {
+  const t = themen.findeThemaMitName(msg.chat.id, match[1]);
+  if (!t) {
+    bot.sendMessage(msg.chat.id, `Kein Thema mit „${match[1]}" gefunden.`);
+    return;
+  }
+  const neu = themen.benenneThemaUm(msg.chat.id, t.id, match[2]);
+  bot.sendMessage(msg.chat.id, `Thema umbenannt in „${neu.name}".`);
+});
+
+bot.onText(/\/loeschen\s+(\S+)/, (msg, match) => {
+  const t = themen.findeThemaMitName(msg.chat.id, match[1]);
+  if (!t) {
+    bot.sendMessage(msg.chat.id, `Kein Thema mit „${match[1]}" gefunden.`);
+    return;
+  }
+  themen.loescheThema(msg.chat.id, t.id);
+  bot.sendMessage(msg.chat.id, `Thema „${t.name}" gelöscht (Historie weg).`);
+});
+
+bot.onText(/\/zusammenfassung(?:\s+(.+))?/, (msg, match) => {
+  const suche = match && match[1] && match[1].trim();
+  let t;
+  if (suche) {
+    t = themen.findeThemaMitName(msg.chat.id, suche);
+  } else {
+    const index = themen.ladeIndex(msg.chat.id);
+    t = index[0] || null;
+  }
+  if (!t) {
+    bot.sendMessage(msg.chat.id, 'Noch kein Thema vorhanden.');
+    return;
+  }
+  const voll = themen.ladeThema(msg.chat.id, t.id);
+  const summary = (voll && voll.summary) || '(noch keine Zusammenfassung — Thema ist zu kurz für eine Komprimierung)';
+  bot.sendMessage(msg.chat.id, `Zusammenfassung von „${t.name}":\n${summary}`);
+});
+
+bot.onText(/\/gedaechtnis/, (msg) => {
+  const fakten = gedaechtnis.ladeFakten(msg.chat.id);
+  if (fakten.length === 0) {
+    bot.sendMessage(msg.chat.id, 'Das Langzeit-Gedächtnis ist noch leer. Schreib „merke dir: …" oder die KI kann Fakten am Ende ihrer Antwort hinterlegen ([MERKE: …]).');
+    return;
+  }
+  const text = 'Langzeit-Gedächtnis:\n' + fakten.map((f, i) => `${i + 1}. ${f}`).join('\n');
+  sendeLang(msg.chat.id, text);
+});
+
+bot.onText(/\/merke\s+(.+)/, (msg, match) => {
+  const fakt = (match && match[1] || '').trim();
+  if (!fakt) return;
+  const ok = gedaechtnis.fuegeHinzu(msg.chat.id, fakt);
+  bot.sendMessage(msg.chat.id, ok ? `Gemerkt: ${fakt}` : 'Steht schon im Gedächtnis.');
+});
+
+bot.onText(/\/vergiss\s+(\d+)/, (msg, match) => {
+  const idx = parseInt(match[1], 10) - 1;
+  const ok = gedaechtnis.entferneFakt(msg.chat.id, idx);
+  bot.sendMessage(msg.chat.id, ok ? 'Fakt entfernt.' : 'Diese Nummer gibt es nicht. /gedaechtnis zeigt die Liste.');
+});
+
+bot.onText(/\/user/, (msg) => {
+  bot.sendMessage(msg.chat.id, `Deine Chat-ID: ${msg.chat.id}\nThemen: ${themen.ladeIndex(msg.chat.id).length}\nGedächtnis: ${gedaechtnis.ladeFakten(msg.chat.id).length} Fakten`);
+});
+
+bot.onText(/\/protokoll/, (msg) => {
+  const text = leseLetzte(20);
+  bot.sendMessage(msg.chat.id, text || 'Das Protokoll ist noch leer.');
+});
+
+bot.onText(/\/komprimieren/, async (msg) => {
+  await bot.sendChatAction(msg.chat.id, 'typing');
+  const index = themen.ladeIndex(msg.chat.id);
+  let gemacht = 0;
+  for (const eintrag of index) {
+    const t = themen.ladeThema(msg.chat.id, eintrag.id);
+    if (t && kompressor.themaBereitZurKomprimierung(t)) {
+      await kompressor.komprimiereThema(msg.chat.id, eintrag.id, lightChat);
+      gemacht++;
+    }
+  }
+  let ged = false;
+  if (gedaechtnis.istVoll(msg.chat.id)) {
+    ged = await kompressor.komprimiereGedaechtnis(msg.chat.id, lightChat);
+  }
+  bot.sendMessage(msg.chat.id, `Komprimierung fertig. ${gemacht} Thema(en) verdichtet${ged ? ', Gedächtnis verdichtet' : ''}.`);
 });
 
 console.log('Telegram-Bot läuft (Polling-Modus).');

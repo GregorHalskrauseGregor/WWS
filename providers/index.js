@@ -1,6 +1,11 @@
 // Wählt den KI-Anbieter anhand von process.env.AI_PROVIDER aus.
-// Jeder Provider bietet die gleiche Funktion: chat(systemPrompt, userMessage) -> Promise<string>
-// Wechsel des Anbieters = nur AI_PROVIDER in der .env ändern, kein Code-Umbau.
+// Jeder Provider bietet die gleiche Funktion: chat(systemPrompt, userMessage, options) -> Promise<string>
+//   options.model    - Modellname überschreiben (sonst ENV-Default)
+//   options.maxTokens - Token-Limit für die Antwort
+//
+// Rollen: 'main' (Chat-Antworten) und 'light' (Themen-Klassifikation, Komprimierung).
+// 'light' nutzt AI_PROVIDER_LIGHT + *_MODEL_LIGHT, fällt sonst auf 'main' zurück.
+// So kann später ein zweites kleines Modell rein, ohne dass Code angefasst werden muss.
 
 const providers = {
   anthropic: require('./anthropic'),
@@ -8,15 +13,25 @@ const providers = {
   minimax: require('./minimax')
 };
 
-function getProvider() {
-  const name = process.env.AI_PROVIDER || 'anthropic';
+function liesProviderName(rolle) {
+  if (rolle === 'light') {
+    return process.env.AI_PROVIDER_LIGHT || process.env.AI_PROVIDER || 'anthropic';
+  }
+  return process.env.AI_PROVIDER || 'anthropic';
+}
+
+function getProvider(rolle = 'main') {
+  const name = liesProviderName(rolle);
   const provider = providers[name];
   if (!provider) {
     throw new Error(
-      `Unbekannter AI_PROVIDER "${name}". Erlaubt: ${Object.keys(providers).join(', ')}`
+      `Unbekannter AI_PROVIDER "${name}" (Rolle: ${rolle}). ` +
+      `Erlaubt: ${Object.keys(providers).join(', ')}`
     );
   }
-  return provider;
+  // Provider bekommen einen Marker, welche Rolle sie bedienen — manche Provider
+  // (z.B. MiniMax später) können je Rolle andere Defaults mitbringen.
+  return { ...provider, rolle };
 }
 
 module.exports = { getProvider };

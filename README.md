@@ -1,6 +1,8 @@
-# KI-Excel-Tool (Telegram-Bot)
+# KI-Chatbot (Telegram-Bot)
 
-Telegram-Bot, der Materialpositionen per Nachricht entgegennimmt, sie mit einer KI interpretiert und in einer Excel-Datei einträgt/addiert. Der KI-Anbieter ist austauschbar (Anthropic, OpenAI, MiniMax).
+Telegram-Bot, der wie ein normaler Chatbot funktioniert. Du kannst Text, Sprachmemos, Fotos, PDFs, Excel- und Word-Dateien schicken — alles wird zu Text verarbeitet und an eine KI-API weitergeleitet, die dir antwortet.
+
+Du kannst beliebig viele Themen parallel laufen lassen. Der Bot erkennt automatisch, ob deine Nachricht zu einem bestehenden Thema gehört oder ein neues eröffnet. Ältere Verläufe werden zu Zusammenfassungen komprimiert, damit die KI pro Anfrage nur den Kontext bekommt, den sie wirklich braucht.
 
 ## Telegram-Bot anlegen
 
@@ -12,100 +14,133 @@ Telegram-Bot, der Materialpositionen per Nachricht entgegennimmt, sie mit einer 
 
 1. Terminal in diesem Ordner öffnen
 2. Abhängigkeiten installieren:
+   ```
    npm install
-3. Beispiel-Materialliste erzeugen:
-   npm run setup-example
-4. `.env.example` zu `.env` kopieren:
+   ```
+3. `.env.example` zu `.env` kopieren:
+   ```
    cp .env.example .env
-5. In `.env` eintragen:
-   - TELEGRAM_BOT_TOKEN (von BotFather)
-   - AI_PROVIDER (anthropic, openai oder minimax)
-   - den passenden API Key für den gewählten Anbieter
-6. Bot starten:
+   ```
+4. In `.env` eintragen:
+   - `TELEGRAM_BOT_TOKEN` (von BotFather)
+   - `AI_PROVIDER` (anthropic, openai oder minimax)
+   - den passenden API-Key für den gewählten Anbieter
+5. Bot starten:
+   ```
    npm start
-7. In Telegram den eigenen Bot öffnen und eine Nachricht schreiben, z. B.:
-   "3 Kugelhahn DN20 hinzufügen"
-   "2 Kugelhahn DN20 entnehmen"
-   "Ich habe 5 Kugelhähne DN20 gebraucht zurückgebracht"
-   "Ich brauche 8 Kugelhahn DN20 für einen Auftrag"
-   "Wie viel Kupferrohr 22mm haben wir?"
-   "Merke dir, dass alle Kugelhähne für Trinkwasser zugelassen sein müssen"
-   "Fasse alle Rotguss-Kugelhähne für Heizung als 'Kugelhahn Heizung Rotguss' zusammen"
-   "/excel" (schickt die aktuelle Datei als Datei im Chat)
-   "/regeln" (zeigt alle gemerkten Regeln)
-   "/gruppen" (zeigt alle gemerkten Artikelgruppen)
-   "/protokoll" (zeigt die letzten Ereignisse/Fehler)
-   "/start" (zeigt die Begrüßung/Kurzanleitung erneut)
+   ```
+6. In Telegram den Bot öffnen und lostippen.
 
-   Ein Foto eines Lieferscheins, einer handschriftlichen Liste, oder ein PDF, eine .xlsx- oder .docx-Datei schicken → der Bot liest die Positionen aus und trägt sie automatisch als "neu" ein. Fotos/PDFs laufen über Mistral OCR (MISTRAL_API_KEY in der .env nötig), Excel/Word werden direkt ausgelesen. Funktioniert mit JEDEM AI_PROVIDER, auch MiniMax – Bilderkennung im Chat-Anbieter ist dafür nicht mehr nötig, das übernimmt Mistral OCR vorab.
+## Eingaben
 
-   Auch Telegram-Sprachnachrichten (Mikrofon-Symbol) funktionieren, auch längere Aufnahmen bis ca. 10 Minuten – der Bot transkribiert sie zuerst über AssemblyAI (Batch, EU-Endpunkt) und verarbeitet sie danach genauso wie Text. Dafür ASSEMBLYAI_API_KEY in der .env eintragen. Die Verarbeitung läuft über den EU-Endpunkt (api.eu.assemblyai.com), damit die Daten in der EU bleiben.
+| Eingabe | Vorverarbeitung | API |
+|---|---|---|
+| Text | — | direkt zur KI |
+| Sprachmemo | AssemblyAI (EU) | Transkript → KI |
+| Foto / Screenshot | Mistral OCR | OCR → KI |
+| PDF | Mistral OCR | OCR → KI |
+| .xlsx | ExcelJS | Tabellen → Text → KI |
+| .docx | mammoth | Word → Text → KI |
 
-## Drei Anwendungsfälle
+## KI-Anbieter
 
-1. **Materialrückgabe** (Monteur bringt Material zurück in die Firma) — läuft über die normale "hinzufuegen"-Erkennung, aber mit Zustand "neu", "gebraucht" oder "verschmutzt". Jeder Artikel ist EINE Zeile mit drei Mengenspalten (Menge Neu, Menge Gebraucht, Menge Verschmutzt) statt mehrerer Zeilen.
-2. **Materialbedarf prüfen** (Monteur braucht Material für einen Einsatz) — reine Abfrage, verändert den Bestand NICHT. Zeigt, was sofort aus dem Lager verfügbar ist (alle drei Mengenspalten zusammengerechnet) und was fehlt/bestellt werden muss. Die eigentliche Reservierung läuft mündlich mit dem Lageristen, nicht über den Bot.
-3. **Lieferschein-/Screenshot-/PDF-/Excel-/Word-Import** (für den Lageristen) — ein Foto, PDF, eine .xlsx- oder .docx-Datei schicken, der Bot liest die Positionen aus und trägt sie als Wareneingang (Zustand "neu") ein. Fotos/PDFs/handschriftliche Listen laufen über Mistral OCR, Excel/Word werden direkt ausgelesen (kein OCR nötig). Funktioniert mit jedem AI_PROVIDER, auch MiniMax. Sehr lange Dokumente (z. B. hunderte Zeilen) werden automatisch in Häppchen von je ~40 Zeilen aufgeteilt und nacheinander verarbeitet, damit keine KI-Anfrage am Token-Limit scheitert – bei größeren Imports meldet der Bot den Fortschritt Abschnitt für Abschnitt.
+- **Anthropic** (Claude Sonnet 4) — Standard
+- **OpenAI** (gpt-4o / gpt-4o-mini)
+- **MiniMax** (M2 / M2-mini)
 
-## Excel-Struktur, Kategorien und Gestaltung
+Wechsel = nur `AI_PROVIDER` in der `.env` ändern, kein Code-Umbau.
 
-Die Datei enthält zwei Tabellenblätter:
-- **Daten** (versteckt) — die eigentliche Quelle, die der Bot liest/schreibt: eine Zeile pro Artikel, Spalten Kategorie | Bezeichnung | Menge Neu | Menge Gebraucht | Menge Verschmutzt | Einheit
-- **Lagerbestand** (sichtbar, öffnet standardmäßig) — die ansehnliche Ansicht für den Lageristen: große Titelzeile, Kategorien als farbige Zwischenüberschriften, Leerzeilen zwischen den Kategorien, breite Bezeichnungsspalte. Wird bei JEDEM Speichern komplett aus dem Daten-Blatt neu aufgebaut, damit die Optik immer zum aktuellen Stand passt
+## Themen & Kontext
 
-Feste Kategorienliste (in kategorien.js definiert, dort anpassbar):
-Rohre & Leitungen, Fittinge & Verbindungstechnik, Armaturen & Ventile, Pumpen & Antriebe, Wärmeerzeugung, Heizkörper & Flächenheizung, Sanitärobjekte, Dämmung & Isolierung, Befestigung & Montagematerial, Elektro & Steuerungstechnik, Werkzeug & Verbrauchsmaterial, Sonstiges
+Jede Unterhaltung läuft in einem „Thema". Du kannst beliebig viele parallel haben. Der Bot ordnet deine Nachrichten anhand der Themen-Namen + 1-Satz-Beschreibung zu — du musst dich nicht aktiv durch Menüs klicken.
 
-Kategorien aus Importen, die nicht in dieser Liste stehen (z. B. aus einem Lieferschein mit eigener Systematik), werden trotzdem als eigener Abschnitt angezeigt, alphabetisch ans Ende sortiert – nichts geht verloren.
+Pro Thema wird der Verlauf dauerhaft gespeichert (JSON-Datei pro Thema). Ab einer gewissen Länge werden die ältesten Nachrichten per KI zu einer **rollenden Zusammenfassung** verdichtet. Im Kontext für die KI landen dann:
 
-Ältere Dateien im vorherigen Format (ein einzelnes Blatt namens "Material") werden beim ersten Zugriff automatisch ins neue Format überführt.
+```
+[Systemrolle + Langzeit-Gedächtnis]
+   +
+[Zusammenfassung des aktiven Themas, falls vorhanden]
+   +
+[Die letzten ~20 Nachrichten des Themas]
+   +
+[Deine aktuelle Nachricht]
+```
 
-Die KI ordnet neue Positionen automatisch einer der festen Kategorien zu. Bereits vergebene Kategorien werden bei erneutem Hinzufügen nicht überschrieben. "/liste" zeigt immer die vollständige, nach Kategorie gruppierte Liste – bei Bedarf aufgeteilt auf mehrere Telegram-Nachrichten (Telegrams Zeichenlimit pro Nachricht liegt bei 4096). Musste aufgeteilt werden, schickt der Bot zusätzlich die Excel-Datei direkt mit.
+Volltext-Verläufe anderer Themen werden **nicht** mitgeschickt — sie liegen auf der Festplatte und sind nur über `/thema <Name>` abrufbar.
 
-## Protokoll
+## Langzeit-Gedächtnis
 
-data/protokoll.txt hält fest, was zuletzt passiert ist – vor allem Fehler bei Imports (z. B. übersprungene Abschnitte) und erfolgreiche Importe. Der Bot beantwortet Nachfragen wie "warum wurde X nicht hinzugefügt?" oder "gab es Fehler beim Import?" darüber, statt die Frage in eine falsche Aktion zu pressen. Bleibt auf die letzten 200 Einträge begrenzt, ältere fallen automatisch raus. Direkt abrufbar über /protokoll.
+Pro User (Telegram-Chat) eine eigene Datei mit Fakten, die **immer** im System-Prompt mitgeschickt werden. Drei Wege, etwas reinzuschreiben:
 
-## Optik/Formatierung
+- Du schreibst: `merke dir: ich heiße Max, wohne in Berlin`
+- Die KI hängt an ihre Antwort eine Zeile `[MERKE: <fakt>]` an — die wird automatisch rausgefiltert, bevor du sie siehst, und gespeichert.
+- Du editierst die Datei `data/users/<chatId>/gedaechtnis.txt` direkt.
 
-Die Excel-Datei wird bei jedem Speichern automatisch neu formatiert (formatiereArbeitsblatt in material.js): blaue, fette Kopfzeile mit weißer Schrift, Kopfzeile bleibt beim Scrollen fixiert, Filter aktiv (nach Kategorie/Bezeichnung filterbar), dezente Zebra-Streifen zur besseren Lesbarkeit bei langen Listen, Nullwerte in den Mengenspalten ausgegraut statt normal schwarz. Passende Spaltenbreiten sind fest vorgegeben. Die Farben lassen sich in material.js über die FARBE_*-Konstanten anpassen.
+Befehle: `/gedaechtnis`, `/merke <Text>`, `/vergiss <Nr>`.
 
-## Bestandsschutz
+Wenn das Gedächtnis zu lang wird (> 6000 Zeichen), wird es beim nächsten Lauf automatisch per KI komprimiert (alte/duplizierte Fakten raus, wichtige bleiben).
 
-Entnahmen können die Materialliste nie ins Minus bringen:
-- Reicht der Bestand nicht, wird nur das Vorhandene abgezogen (Bestand landet bei 0), die Fehlmenge wird zurückgemeldet
-- Ist die Position unbekannt, wird nichts angelegt, der Bot meldet das
+## Light-Provider (optional, spart Kosten)
 
-## Gedächtnis-Dokumente
+Standard: alle Aufgaben laufen über dasselbe Modell. Optional kannst du ein zweites, kleines Modell für die Hintergrund-Aufgaben konfigurieren:
 
-Zwei Textdateien unter data/, die der Bot selbst schreibt und bei jeder Nachricht automatisch mit einbezieht:
-- data/regeln.txt — allgemeine Regeln, die der Nutzer per Nachricht festlegt (z. B. Zulassungsanforderungen)
-- data/artikelgruppen.txt — Sammelbegriffe für Artikel-Varianten, die als eine Position geführt werden sollen (verhindert unnötig viele Einzelpositionen für im Grunde gleiches Material)
+```
+AI_PROVIDER_LIGHT=openai
+OPENAI_MODEL_LIGHT=gpt-4o-mini
+```
 
-Beide Dateien lassen sich jederzeit direkt bearbeiten (einfacher Text, eine Regel pro Zeile) oder per Telegram-Nachricht erweitern.
+Dann laufen Themen-Klassifikation und Komprimierung über das Light-Modell, nur die Antwort-Generierung über das starke Hauptmodell. Spart bei vielen aktiven Usern spürbar Kosten, ohne dass die Antwort-Qualität leidet.
+
+## Multi-User
+
+Jeder Telegram-Chat bekommt eigene Themen, eigenes Gedächtnis, eigene Verläufe. Daten liegen unter `data/users/<chatId>/…`. User sehen sich gegenseitig nicht.
+
+## Befehle
+
+| Befehl | Funktion |
+|---|---|
+| `/start` | Anleitung |
+| `/themen` | Liste aller Themen |
+| `/thema <Name>` | Voller Verlauf eines Themas |
+| `/neu <Titel>` | Neues Thema starten |
+| `/umbenennen <alt> <neu>` | Thema umbenennen |
+| `/loeschen <Name>` | Thema löschen |
+| `/zusammenfassung [Name]` | Aktuelle KI-Zusammenfassung |
+| `/gedaechtnis` | Alle gemerkten Fakten |
+| `/merke <Text>` | Fakt manuell hinzufügen |
+| `/vergiss <Nr>` | Fakt entfernen |
+| `/komprimieren` | Verläufe/Gedächtnis manuell verdichten |
+| `/user` | Eigene Chat-ID, Statistik |
+| `/protokoll` | Letzte Fehler/Ereignisse |
+
+## Datenstruktur
+
+```
+data/
+  begruessung.txt         editierbarer /start-Text
+  protokoll.txt           letzte 200 Ereignisse/Fehler
+  users/
+    <chatId>/
+      gedaechtnis.txt     Langzeit-Fakten dieses Users
+      themen-index.json   Liste der Themen (Metadaten)
+      themen/
+        <themaId>.json    Volle Historie + Rollzusammenfassung
+```
 
 ## Struktur
 
-- bot.js — Haupteinstieg, empfängt Telegram-Nachrichten, steuert den Ablauf
-- providers/ — ein Modul pro KI-Anbieter, alle mit gleicher chat()-Funktion
-- providers/index.js — wählt den Anbieter anhand von AI_PROVIDER
-- material.js — Excel-Logik: Positionen addieren (mit Kategorie und Zustandsspalten neu/gebraucht/verschmutzt), entnehmen (mit Bestandsschutz), Bedarf prüfen (read-only), suchen, auflisten
-- kategorien.js — feste Kategorienliste, zentral für KI-Klassifizierung und Excel-Ansicht
-- ansicht.js — baut die hübsche "Lagerbestand"-Ansicht aus den rohen Daten
-- begruessung.js — Begrüßungstext für /start, liegt editierbar in data/begruessung.txt
-- wissen.js — Speicherung/Abruf der Gedächtnis-Dokumente (Regeln, Artikelgruppen)
-- protokoll.js — Ereignisprotokoll (Fehler, Importe), letzte 200 Einträge
-- transcribe.js — Spracherkennung über AssemblyAI
-- ocr.js — Mistral OCR: wandelt Fotos, Screenshots und PDFs in Text um
-- dokument.js — direktes Auslesen von Excel- und Word-Dateien (kein OCR nötig)
-- providers/anthropic.js, providers/openai.js — unterstützen zusätzlich Bilderkennung (aktuell ungenutzt, da der Lieferschein-Import jetzt über Mistral OCR + reinen Text läuft und damit mit jedem Anbieter funktioniert)
-- data/material.xlsx — die eigentliche Materialliste (Origin)
-- data/regeln.txt, data/artikelgruppen.txt — Gedächtnis-Dokumente
-
-## Anbieter wechseln
-
-Nur AI_PROVIDER in der .env ändern (z. B. von minimax auf anthropic) und den passenden API Key eintragen. Kein Code-Umbau nötig.
+- `bot.js` — Telegram-Einstieg, Orchestrierung
+- `themen.js` — Themen-Verwaltung, Multi-User-Isolation
+- `gedaechtnis.js` — Langzeit-Fakten
+- `kompressor.js` — Rollende Zusammenfassungen
+- `kontext.js` — Minimaler API-Kontext (System-Prompt, Themen-Klassifikation)
+- `transcribe.js` — AssemblyAI für Sprachnachrichten
+- `ocr.js` — Mistral OCR für Bilder/PDFs
+- `dokument.js` — Excel-/Word-Auslese
+- `protokoll.js` — Ereignisprotokoll
+- `begruessung.js` — Start-Anleitung (editierbar)
+- `providers/` — Anthropic, OpenAI, MiniMax
 
 ## Deployment (Railway)
 
-Wird im nächsten Schritt ergänzt, sobald das lokale Testen funktioniert.
+Wird ergänzt, sobald das lokale Testen läuft.
