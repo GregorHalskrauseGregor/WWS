@@ -102,9 +102,25 @@ function findeExperteMitId(id) {
   return _expertenCache().find((e) => e.id === id) || null;
 }
 
+// Prüft, ob ein Experte eine aktive Session für diesen User hat. Wird vom
+// Bot VOR der Trigger-Erkennung aufgerufen, damit laufende Erfassungen
+// (z.B. Materialaufmaß) nicht durch Trigger-freie Wörter ("fertig", "pdf")
+// unterbrochen werden.
+function aktiverExperte(chatId) {
+  for (const e of _expertenCache()) {
+    if (typeof e.hatAktiveSession === 'function') {
+      try {
+        if (e.hatAktiveSession(chatId)) return e;
+      } catch { /* defensiv */ }
+    }
+  }
+  return null;
+}
+
 module.exports = {
   ladeExperten,
   findeExperte,
   findeExperteMitId,
+  aktiverExperte,
   listeStatus
 };

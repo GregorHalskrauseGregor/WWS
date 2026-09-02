@@ -262,6 +262,21 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt. Kein Kommentar davor oder danach. F
   tools: null,
   implementiert: true,
 
+  // Wird vom Bot VOR der Trigger-Erkennung aufgerufen. Sagt, ob für diesen
+  // User gerade eine Aufmaß-Session läuft (permanente JSON-Datei), damit
+  // Trigger-freie Nachrichten ("fertig", "pdf bitte", "ändere Position 2")
+  // trotzdem beim Materialaufmaß-Experten landen.
+  hatAktiveSession: function(chatId) {
+    const s = ladeSession(chatId);
+    if (!s) return false;
+    // Eine Session gilt als "aktiv", wenn sie schon irgendwas erfasst hat
+    // (Projektnummer, Bezeichnung oder mindestens 1 Position). Solange
+    // die Session nur aus einem leeren Stub besteht, soll der Trigger
+    // weiterhin den normalen Flow starten.
+    return !!(s.projekt && (s.projekt.nummer || s.projekt.bezeichnung))
+      || (Array.isArray(s.positionen) && s.positionen.length > 0);
+  },
+
   async verarbeite(input, kontext) {
     const { chatId, text, dokInhalt, systemPrompt, gedaechtnisText } = input;
     const userText = String(text || '').trim();

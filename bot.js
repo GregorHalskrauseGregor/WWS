@@ -153,10 +153,11 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
   // 2) Kontext aufbauen
   const gedaechtnisText = gedaechtnis.ladeGedaechtnis(chatId);
 
-  // 2a) Experten-Erkennung: passt die Nachricht zu einem registrierten
-  // Expertensystem? Wenn ja, wird dessen systemPromptAdd an den Haupt-Prompt
-  // angehängt und dessen verarbeite() aufgerufen.
-  const experte = experten.findeExperte(userText);
+  // 2a) Experten-Erkennung. Vorrang hat eine laufende Session (damit
+  // Trigger-freie Wörter wie "fertig" oder "pdf" trotzdem beim richtigen
+  // Experten landen), dann kommt der Trigger-Match. Sonst Standard-Flow.
+  let experte = experten.aktiverExperte(chatId);
+  if (!experte) experte = experten.findeExperte(userText);
   const expertenKontext = experte ? experte.systemPromptAdd : null;
   const systemPrompt = kontext.baueHauptSystemPrompt(gedaechtnisText, expertenKontext);
 
