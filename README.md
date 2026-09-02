@@ -183,10 +183,21 @@ data/
 - `ratelimit.js` — Pro-User-Limits (Stunde/Tag)
 - `web.js` — Web-Suche (Brave Search API) + URL-Fetch (Jina Reader)
 - `tools.js` — Tool-Definitionen + Executor-Dispatcher
+- `lib/excel.js` — Excel-Wrapper (Materialverwaltung, ExcelJS LAZY geladen)
+- `lib/pdf.js` — PDF-Erstellung (pdfkit LAZY geladen)
+- `lib/pdf_filler.js` — AcroForm-PDF-Ausfüllen (pdf-lib LAZY geladen)
+- `lib/pdf_reader.js` — PDF-Text-Extraktion (pdf-parse LAZY geladen)
+- `lib/unterschrift.js` — Unterschrift-Bild-Verwaltung
+- `material.js` — Warenwirtschaft: addieren, entnehmen, suchen, Bedarf prüfen, liste
+- `kategorien.js` — 12 SHK-Kategorien
 - `experten/` — Expertensysteme (Plugin-Architektur)
   - `index.js` — Registry: lädt alle Module, erkennt welches zur Nachricht passt
   - `_template.js` — Vorlage für neue Module
   - `recherche.js` — voll funktional (Web-Suche, Fakten)
+  - `materialaufmass.js` — voll funktional (PDF-Erstellung)
+  - `material_rueckgabe.js` — Wareneingang: Bestand ↑ in material.xlsx
+  - `material_entnahme.js` — Materialverbrauch: Bestand ↓ in material.xlsx
+  - `leistungserfassung.js`, `bestellung.js` — Stubs
   - `leistungserfassung.js`, `materialaufmass.js`, `bestellung.js`, `material_rueckgabe.js`, `material_entnahme.js` — Stubs zum schrittweisen Befüllen
 - `transcribe.js` — AssemblyAI für Sprachnachrichten
 - `ocr.js` — Mistral OCR für Bilder/PDFs
@@ -205,10 +216,34 @@ Jeder Bot-Use-Case ist ein eigenes Modul unter `experten/`. Die Module werden au
 |---|---|---|
 | 🔍 Recherche | ✅ voll funktional | „suche nach", „was ist", „finde", „aktuell" |
 | 📐 Materialaufmaß | ✅ voll funktional | „aufmaß", „verlegt", „montiert" |
+| 📦 Material-Rückgabe | ✅ voll funktional | „rückgabe", „wareneingang", „lieferschein" |
+| 🔧 Material-Entnahme | ✅ voll funktional | „entnahme", „verbrauch", „verbaue" |
 | 🧾 Leistungserfassung | 🚧 Stub | „rechnung", „leistung", „abrechnung" |
 | 🛒 Bestellung | 🚧 Stub | „bestellung", „brauche", „einkauf" |
-| 📦 Material-Rückgabe | 🚧 Stub | „rückgabe", „zurückbringen", „retoure" |
-| 🔧 Material-Entnahme | 🚧 Stub | „entnahme", „verbrauch", „verbaue" |
+
+### Warenwirtschaft (Materialverwaltung)
+
+**Excel-Datei:** `data/material.xlsx` (global, alle User zusammen)
+
+**Schema (6 Spalten, eine Zeile pro Artikel):**
+| Kategorie | Bezeichnung | Menge Neu | Menge Gebraucht | Menge Verschmutzt | Einheit |
+
+**Funktionen** (in `material.js`):
+- `addierePositionen` — Material hinzufügen (Wareneingang/Rückgabe), mit Zustand (neu/gebraucht/verschmutzt)
+- `entnehmePositionen` — Material entnehmen (Verbrauch), mit Bestandsschutz (nie negativ)
+- `suchePositionen` — Fuzzy-Suche (Bezeichnung + Kategorie, Token-Match, DN-Normalisierung)
+- `pruefeBedarf` — Sammelanfragen (z.B. „alles in DN70"), summiert Bestände
+- `ganzeListe` — kompletter Bestand, gruppiert nach Kategorie
+
+**Multi-Input:** Die zwei Material-Experten (Rückgabe/Entnahme) akzeptieren Daten aus Text, Sprache (AssemblyAI-Transkription), Foto (Mistral OCR) und Dokumenten (Lieferschein-PDF/Excel direkt eingelesen).
+
+**Wichtige Designentscheidungen:**
+- Eine Zeile pro Artikel (nicht pro Zustand) — die drei Mengenspalten summieren sich zum Gesamtbestand
+- NIE wird eine Zeile gelöscht, auch wenn der Bestand auf 0 fällt
+- Bestandsschutz: Entnahmen können nie negativ werden, Fehlmenge wird gemeldet
+- Kein Self-Healing bei fehlender Datei (soll laut auffallen)
+- Existierende Positionen werden in der jeweiligen Zustandsspalte erhöht, neue Positionen als neue Zeile angefügt
+- Kategorien: 12 feste SHK-Kategorien (Rohre & Leitungen, Fittinge, Armaturen & Ventile, Pumpen, Wärmeerzeugung, Heizkörper, Sanitärobjekte, Dämmung, Befestigung, Elektro, Werkzeug, Sonstiges)
 
 `/experten` zeigt alle Details und Trigger-Wörter im Bot.
 
