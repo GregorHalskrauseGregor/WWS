@@ -72,49 +72,147 @@ function baueSystemPromptFuerExtraktion(existingSession) {
 
   return `Du bist der Materialaufmaß-Extraktor. Deine EINZIGE Aufgabe: aus der Nutzernachricht strukturierte Daten extrahieren und als JSON zurückgeben.
 
-Antworte AUSSCHLIESSLICH mit genau einem JSON-Objekt, ohne zusätzlichen Text, ohne Markdown-Formatierung. Das JSON-Objekt hat EXAKT diese Form:
+⚠️ WICHTIG — ANTWORT-FORMAT ⚠️
+Antworte AUSSCHLIESSLICH mit genau einem JSON-Objekt. KEIN zusätzlicher Text davor oder danach, KEINE Markdown-Formatierung, KEINE Tabellen, KEINE Erklärungen, KEIN "Hier ist das JSON:".
+
+Nur das rohe JSON-Objekt in genau dieser Form:
 
 {
   "projekt": {
-    "nummer": string|null,        // Projektnummer, z.B. "PRJ-2026-001"
-    "bezeichnung": string|null    // Klartext-Bezeichnung, z.B. "Badsanierung Müller"
+    "nummer": "PRJ-2026-001",
+    "bezeichnung": "Badsanierung Müller"
   },
   "positionen": [
-    {
-      "name": string,             // Materialname, z.B. "Kupferrohr 22mm"
-      "menge": number,            // Menge, z.B. 12
-      "einheit": string,          // Einheit, z.B. "m", "Stk.", "lfm"
-      "artikelnummer": string|null // Artikelnummer, falls genannt
-    }
+    { "name": "Kupferrohr 22mm", "menge": 12, "einheit": "m", "artikelnummer": null },
+    { "name": "Wandscheibe DN20", "menge": 3, "einheit": "Stk.", "artikelnummer": "WS-12345" }
   ],
-  "vollstaendig": boolean,         // true wenn projekt.nummer + projekt.bezeichnung + mind. 1 Position vorhanden
-  "fehlt": string[]                // Liste was fehlt, z.B. ["Projektnummer", "Bezeichnung"]
+  "vollstaendig": true,
+  "fehlt": []
 }
 
+Falls die Nutzernachricht KEINE Aufmaß-Daten enthält (User schreibt etwas Beliebiges wie "passt", "fertig", "stop"), gib dieses minimale Gerüst zurück:
+
+{"projekt": {"nummer": null, "bezeichnung": null}, "positionen": [], "vollstaendig": false, "fehlt": ["Projektnummer", "Bezeichnung", "mindestens 1 Position"]}
+
 Extraktionsregeln:
-- Projektnummer: erstes erkennbares Token mit Format wie "PRJ-XXXX", "PRJ-2026-001", "Projekt 123", oder "2026/123". Wenn der Nutzer "PRJ-2026-001 Badsanierung Müller" schreibt, ist "PRJ-2026-001" die Nummer und "Badsanierung Müller" die Bezeichnung.
+- Projektnummer: erstes erkennbares Token mit Format wie "PRJ-XXXX", "PRJ-2026-001", "Projekt 123", "26-0111" oder "2026/123". Wenn der Nutzer "26-0111 Heizraumumbau" schreibt, ist "26-0111" die Nummer.
 - Bezeichnung: alles zwischen Projektnummer und erster Position, oder die ganze Nachricht wenn keine Projektnummer.
 - Positionen: typische Muster "12m Kupferrohr", "3 Stück Wandscheibe DN20", "5x Fitting", "10 lfm Rohr". Menge als Zahl (Komma zu Punkt), Einheit normalisiert ("Stück" → "Stk.", "lfm" = laufende Meter, "m" = Meter, "kg" = Kilogramm).
 - Artikelnummer: nur übernehmen wenn explizit genannt ("Art-Nr 12345", "Artikelnummer ABC-123"). Sonst null.
 - Mehrere Positionen in einer Nachricht → als Array erfassen.
 - Wenn nur "Material: X" ohne Menge → trotzdem erfassen, einheit = "Stk.", menge = 1, der User kann's noch anpassen.
-- Spracherkennungs-/Diktierfehler: offensichtliche Fehler korrigieren (z.B. "Kupferrhor" → "Kupferrohr").
-${ctx}`;
+- Spracherkennungs-/Diktierfehler: offensichtliche Fehler korrigieren (z.B. "Kupferrhor" → "Kupferrohr", "Profipressböngen" → "Profipressbogen").${ctx}`;
 }
 
-// Extrahiert das JSON aus dem KI-Output (manchmal in Markdown-Block verpackt).
+// Extrahiert das JSON aus dem KI-Output. Reihenfolge:
+//   1) JSON in ```...```-Codeblock (mit Brace-Balancing für nested Objects)
+//   2) Roher JSON-Block im Text (gleiche Brace-Balancing-Logik)
+//   3) Markdown-Fallback: parst eine "**Projekt-Nr.:** X"-Antwort
 function extrahiereJson(text) {
-  // Erst versuchen, einen JSON-Block in ``` ... ``` zu finden
+  // 1) JSON in Markdown-Codeblock
   const mdMatch = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
   if (mdMatch) {
-    try { return JSON.parse(mdMatch[1]); } catch { /* fallthrough */ }
+    const inner = mdMatch[1];
+    const obj = versucheJsonMitBraceBalancing(inner);
+    if (obj) return obj;
   }
-  // Sonst rohen JSON-Block
-  const rawMatch = text.match(/\{[\s\S]*\}/);
-  if (rawMatch) {
-    try { return JSON.parse(rawMatch[0]); } catch { /* fallthrough */ }
-  }
+  // 2) Roher JSON-Block: erstes { bis zum BALANCIERTEN }
+  const obj = extrahiereOuterstesJsonObj(text);
+  if (obj) return obj;
+  // 3) Fallback: Markdown-Format parsen (für Modelle, die kein JSON liefern)
+  const mdResult = extrahiereAusMarkdown(text);
+  if (mdResult) return mdResult;
+
+  // Detailliertes Loggen
+  console.error('extrahiereJson: kein JSON+kein Markdown-Pattern gefunden. KI-Output (erste 500 Zeichen):');
+  console.error(text.slice(0, 500));
   throw new Error('Konnte kein JSON in der KI-Antwort finden: ' + text.slice(0, 200));
+}
+
+// Findet das erste top-level JSON-Objekt in einem String und parst es.
+// Nutzt Brace-Counting, um das passende close-brace zu finden, damit
+// nested Objects (z.B. positionen als Array) korrekt erkannt werden.
+function extrahiereOuterstesJsonObj(text) {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end <= start) return null;
+  return versucheJsonMitBraceBalancing(text.substring(start, end + 1));
+}
+
+function versucheJsonMitBraceBalancing(candidate) {
+  try { return JSON.parse(candidate); } catch { return null; }
+}
+
+// Fallback-Parser: extrahiert Daten aus einer Markdown-formatierten Antwort
+// wie "**Projekt-Nr.:** 26-0311" und einer Pipe-Tabelle mit Positionen.
+function extrahiereAusMarkdown(text) {
+  if (!text || typeof text !== 'string') return null;
+  // Muss mindestens einen unserer Marker enthalten
+  if (!/projekt|bezeichnung|position/i.test(text)) return null;
+
+  const projekt = { nummer: null, bezeichnung: null };
+  const positionen = [];
+
+  // Projektnummer: "**Projekt-Nr.:** 26-0311" oder "Projektnummer: 26-0311"
+  const nrMatch = text.match(/Projekt[- ]?Nr\.?:?\s*\*?\*?\s*([A-Za-z0-9][\w./-]{1,30})/i);
+  if (nrMatch) projekt.nummer = nrMatch[1].trim();
+
+  // Bezeichnung: "**Bezeichnung:** Umbau Trinkwasser" oder "Bezeichnung: ..."
+  const bezMatch = text.match(/Bezeichnung:?\s*\*?\*?\s*([^\n*]+?)(?=\n|$|\*\*)/i);
+  if (bezMatch) projekt.bezeichnung = bezMatch[1].trim().replace(/\*+$/, '');
+
+  // Tabelle mit Positionen: | Nr | Material | Menge | Einheit |
+  // Wir suchen nach Zeilen, die mit | beginnen und Zahlen + Wörter enthalten.
+  const zeilen = text.split('\n');
+  for (const zeile of zeilen) {
+    const trimmed = zeile.trim();
+    if (!trimmed.startsWith('|')) continue;
+    // Header-Zeile oder Separator überspringen
+    if (/\|[-\s]+\|/.test(trimmed)) continue;
+    if (/Pos\.|Material|Menge|Einheit/i.test(trimmed)) continue;
+
+    // Spalten splitten
+    const zellen = trimmed.split('|').map((s) => s.trim()).filter(Boolean);
+    if (zellen.length < 3) continue;
+
+    // Erwartete Reihenfolge: Nr, Material, Menge, Einheit, [Art-Nr]
+    const posNr = zellen[0];
+    // Header-Zeile mit "Nr" überspringen
+    if (posNr.toLowerCase() === 'nr' || posNr.toLowerCase() === 'pos.') continue;
+    if (!/^\d+$/.test(posNr)) continue;
+
+    const name = zellen[1] || '';
+    const mengeRaw = zellen[2] || '';
+    const einheit = (zellen[3] || 'Stk.').replace(/\.$/, '');
+    const artikelnummer = zellen[4] || null;
+
+    const menge = parseFloat(mengeRaw.replace(',', '.'));
+    if (isNaN(menge)) continue;
+
+    positionen.push({
+      name,
+      menge,
+      einheit,
+      artikelnummer: artikelnummer || null
+    });
+  }
+
+  if (!projekt.nummer && !projekt.bezeichnung && positionen.length === 0) return null;
+  return {
+    projekt,
+    positionen,
+    vollstaendig: !!(projekt.nummer && projekt.bezeichnung && positionen.length > 0),
+    fehlt: []
+  };
 }
 
 async function generiereAufmassPdf(chatId, daten) {
