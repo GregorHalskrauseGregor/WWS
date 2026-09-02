@@ -526,10 +526,26 @@ bot.on('message', async (msg) => {
   if (msg.photo) {
     try {
       await mitTipptIndikator(chatId, async () => {
-        // Wenn ein Experte onPhoto unterstützt, leite das Foto dorthin
-        const experte = experten.ladeExperten().find((e) => typeof e.onPhoto === 'function');
-        // Heuristik: der Materialaufmaß-Experte fängt ALLE Fotos ab,
-        // wenn er eine aktive Session hat
+        const caption = (msg.caption || '').toLowerCase();
+        const istUnterschrift = /unterschrift|signature|unterschreiben|unterschreib/.test(caption);
+
+        // 1) Wenn Caption nach Unterschrift klingt -> immer als Unterschrift speichern,
+        //    auch ohne aktive Aufmaß-Session. Der User kann die Unterschrift vorab
+        //    hochladen, BEVOR er die Aufmaß-Daten schickt.
+        if (istUnterschrift) {
+          const bestes = msg.photo[msg.photo.length - 1];
+          const link = await bot.getFileLink(bestes.file_id);
+          const res = await fetch(link);
+          const buf = Buffer.from(await res.arrayBuffer());
+          const libUnterschrift = require('./lib/unterschrift');
+          await libUnterschrift.speichereUnterschrift(chatId, buf);
+          schreibeEintrag('Info', `Unterschrift gespeichert (${chatId})`);
+          await bot.sendMessage(chatId, '✍️ Unterschrift gespeichert unter `data/users/' + chatId + '/unterschrift.png`.\n\nSie wird automatisch in künftige Aufmaß-PDFs eingebunden. Wenn du jetzt ein Materialaufmaß erstellen willst, schick einfach deine Aufmaß-Daten.');
+          return;
+        }
+
+        // 2) Aktive Materialaufmaß-Session? -> als Unterschrift interpretieren
+        //    (auch ohne Caption, da Session-Kontext schon klar ist)
         const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
         if (matExp && typeof matExp.onPhoto === 'function') {
           const sessionDatei = path.join(userVerzeichnisFuerExperten(chatId), 'aufnahme_session.json');
@@ -540,7 +556,7 @@ bot.on('message', async (msg) => {
             return;
           }
         }
-        // Standard: Foto per OCR verarbeiten
+        // 3) Standard: Foto per OCR verarbeiten
         const bestes = msg.photo[msg.photo.length - 1];
         const link = await bot.getFileLink(bestes.file_id);
         const res = await fetch(link);
