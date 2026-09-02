@@ -62,8 +62,8 @@ const mainToolProvider = mainProvider;
 
 console.log('Provider main: ' + mainProvider.name);
 console.log('Provider light: ' + lightProvider.name);
-if (process.env.TAVILY_API_KEY || process.env.JINA_API_KEY) {
-  const tools = (process.env.TAVILY_API_KEY ? 'web_search ' : '') + (process.env.JINA_API_KEY ? 'web_fetch' : '');
+if (process.env.BRAVE_API_KEY || process.env.JINA_API_KEY) {
+  const tools = (process.env.BRAVE_API_KEY ? 'web_search ' : '') + (process.env.JINA_API_KEY ? 'web_fetch' : '');
   console.log('Web-Tools aktiv: ' + tools.trim());
 }
 

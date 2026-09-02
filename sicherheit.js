@@ -99,7 +99,7 @@ const API_KEY_MUSTER = [
 
 // Env-Variablennamen, die im Klartext in Outputs nichts zu suchen haben.
 const ENV_SECRET_MUSTER = [
-  /(?:^|[\s,;])(ANTHROPIC_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|JINA_API_KEY|MINIMAX_API_KEY|ASSEMBLYAI_API_KEY|MISTRAL_API_KEY|TELEGRAM_BOT_TOKEN)\s*=\s*[^\s,;\n]+/gi
+  /(?:^|[\s,;])(ANTHROPIC_API_KEY|OPENAI_API_KEY|BRAVE_API_KEY|JINA_API_KEY|MINIMAX_API_KEY|ASSEMBLYAI_API_KEY|MISTRAL_API_KEY|TELEGRAM_BOT_TOKEN)\s*=\s*[^\s,;\n]+/gi
 ];
 
 function filterOutput(text) {

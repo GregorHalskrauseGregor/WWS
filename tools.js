@@ -10,17 +10,18 @@ const { webSearch, webFetch } = require('./web');
 
 // Welche Tools gerade verfügbar sind, hängt davon ab, ob die nötigen
 // API-Keys gesetzt sind UND der Main-Provider Tool-Use unterstützt.
-// So bekommt die KI z.B. web_search gar nicht erst angeboten, wenn TAVILY_API_KEY
+// So bekommt die KI z.B. web_search gar nicht erst angeboten, wenn BRAVE_API_KEY
 // fehlt — und ruft es daher auch nicht auf.
 function verfuegbareTools(mainProvider) {
   if (mainProvider && mainProvider.supportsTools === false) {
     return [];
   }
   const tools = [];
-  if (process.env.TAVILY_API_KEY) {
+  if (process.env.BRAVE_API_KEY) {
     tools.push({
       name: 'web_search',
       description: 'Sucht im Internet nach aktuellen Informationen zu einer Suchanfrage. ' +
+        'Nutzt die Brave Search API (EU, DSGVO-konform, eigener Index — kein Google). ' +
         'Geeignet für Fakten, Nachrichten, Personen, Produkte, Anleitungen, Adressen, ' +
         'Aktienkurse, Wetter und alles, wofür du aktuelle Daten brauchst. ' +
         'Gib NUR die Suchanfrage zurück, keine URLs.',

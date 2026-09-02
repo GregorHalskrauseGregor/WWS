@@ -80,7 +80,7 @@ Der Bot kann im Internet suchen und Webseiten lesen, wenn die passenden API-Keys
 
 | Tool | Wofür | Dienst | Key |
 |---|---|---|---|
-| `web_search` | Aktuelle Infos, Fakten, Nachrichten, Adressen, … | Tavily (speziell für AI-Agenten) | `TAVILY_API_KEY` (gratis, ~1000/Monat) |
+| `web_search` | Aktuelle Infos, Fakten, Nachrichten, Adressen, … | Brave Search API (EU, DSGVO-konform, eigener Index) | `BRAVE_API_KEY` (gratis, ~2000/Monat) |
 | `web_fetch` | Beliebige URL lesen (gibt Markdown zurück) | Jina Reader (rendert auch JS-Seiten) | `JINA_API_KEY` (optional, ohne Key Rate-Limit) |
 
 **Wichtig für Tool-Use:** aktuell nur `AI_PROVIDER=anthropic` und `AI_PROVIDER=openai` — MiniMax (M2/M3) hat ein proprietäres Tool-Format (XML), das wir nicht parsen. Wenn das Modell trotzdem versucht, ein Tool aufzurufen, fängt der Output-Filter den XML-Block ab und ersetzt ihn durch eine freundliche Erklärung — du siehst dann keine kryptische XML, sondern eine Meldung. Für echten Web-Zugriff: Provider auf `anthropic` oder `openai` umstellen.

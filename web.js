@@ -1,52 +1,55 @@
-// Web-Zugriffe: Suche (Tavily) + URL-Fetch (Jina Reader).
+// Web-Zugriffe: Suche (Brave Search API) + URL-Fetch (Jina Reader).
 // Beide sind optional — wenn die API-Keys fehlen, werfen die Funktionen einen
 // klaren Fehler, der im Bot als Tool-Result zurückkommt. Der Bot läuft dann
 // einfach ohne Web-Zugriff weiter, die KI weiß dann, dass das Tool grad nicht
 // verfügbar ist, und kann das in ihrer Antwort berücksichtigen.
 
-const TAVILY_URL = 'https://api.tavily.com/search';
+const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
 const JINA_READER_URL = 'https://r.jina.ai/';
 
 // --- web_search -----------------------------------------------------------
 
-// Sucht im Web. Gibt einen kompakten Text-Block zurück, der Titel, URL und
-// Snippet pro Treffer enthält. Bewusst text-basiert (kein JSON), damit die
-// KI ihn direkt weiterverarbeiten kann.
+// Sucht im Web über die Brave Search API (Sitz: Irland, EU). Gibt einen
+// kompakten Text-Block zurück, der Titel, URL und Snippet pro Treffer enthält.
+// Bewusst text-basiert (kein JSON), damit die KI ihn direkt weiterverarbeiten kann.
+//
+// Gratis-Tier: 2.000 Anfragen/Monat. Key auf https://brave.com/search/api/ holen.
 async function webSearch(query, options = {}) {
-  const key = process.env.TAVILY_API_KEY;
+  const key = process.env.BRAVE_API_KEY;
   if (!key) {
-    throw new Error('TAVILY_API_KEY fehlt in der .env — web_search ist deaktiviert. Key auf https://tavily.com holen (gratis).');
+    throw new Error('BRAVE_API_KEY fehlt in der .env — web_search ist deaktiviert. Key auf https://brave.com/search/api/ holen (gratis, EU).');
   }
-  const maxResults = Math.min(Math.max(options.maxResults || 5, 1), 10);
+  const count = Math.min(Math.max(options.maxResults || 5, 1), 20);
 
-  const res = await fetch(TAVILY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      api_key: key,
-      query: String(query || '').slice(0, 500),
-      max_results: maxResults,
-      // Kein AI-Summary hier — die Antwort soll der Haupt-KI überlassen bleiben.
-      include_answer: false,
-      // Lieber "advanced" — das sind echte Suchergebnisse, keine Ads.
-      search_depth: 'basic',
-      // Antworten gerne auf Deutsch, falls das die Locale hergibt.
-      topic: 'general'
-    })
+  const params = new URLSearchParams({
+    q: String(query || '').slice(0, 500),
+    count: String(count)
+    // Brave unterstützt weitere Parameter (country, search_lang, safesearch) —
+    // wir halten es hier absichtlich einfach und überlassen der KI die Formulierung.
+  });
+
+  const res = await fetch(BRAVE_SEARCH_URL + '?' + params.toString(), {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'Accept-Encoding': 'gzip',
+      'X-Subscription-Token': key
+    }
   });
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error('Tavily-Fehler: ' + JSON.stringify(data).slice(0, 300));
+    throw new Error('Brave-API-Fehler: ' + JSON.stringify(data).slice(0, 300));
   }
-  if (!Array.isArray(data.results) || data.results.length === 0) {
+  const results = (data.web && data.web.results) || [];
+  if (results.length === 0) {
     return 'Keine Suchergebnisse für: ' + query;
   }
 
-  const zeilen = data.results.map((r, i) => {
+  const zeilen = results.map((r, i) => {
     const titel = r.title || '(ohne Titel)';
     const url = r.url || '';
-    const snippet = (r.content || '').slice(0, 500);
+    const snippet = (r.description || '').slice(0, 500);
     return `[${i + 1}] ${titel}\n    ${url}\n    ${snippet}`;
   });
   return `Suchergebnisse für "${query}":\n` + zeilen.join('\n\n');
