@@ -768,7 +768,7 @@ bot.onText(/\/user/, (msg) => {
     `Rate-Limit: ${rl.stunde} Nachrichten/Stunde, ${rl.tag} Nachrichten/Tag, ${rl.tools} Tool-Calls/Tag`);
 });
 
-bot.onText(/\/delete-my-data/, async (msg) => {
+bot.onText(/\/delete[-_]my[-_]data/, async (msg) => {
   // Hard delete: gesamten User-Ordner weg. Nicht wiederherstellbar.
   const profil = benutzer.ladeProfil(msg.chat.id);
   if (!profil) {
@@ -836,6 +836,18 @@ bot.onText(/\/komprimieren/, async (msg) => {
     ged = await kompressor.komprimiereGedaechtnis(msg.chat.id, lightChat);
   }
   bot.sendMessage(msg.chat.id, `Komprimierung fertig. ${gemacht} Thema(en) verdichtet${ged ? ', Gedächtnis verdichtet' : ''}.`);
+});
+
+// /reset_aufnahme verwirft die aktive Materialaufmaß-Session und startet sauber.
+// Nützlich, wenn eine alte Session "hängenbleibt" und der User komplett neu anfangen will.
+bot.onText(/\/reset_aufnahme/, (msg) => {
+  const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
+  if (matExp && matExp._internals && matExp._internals.loescheSession) {
+    matExp._internals.loescheSession(msg.chat.id);
+    bot.sendMessage(msg.chat.id, '🔄 Aufmaß-Session zurückgesetzt. Du kannst jetzt ein neues Aufmaß starten.');
+  } else {
+    bot.sendMessage(msg.chat.id, 'Materialaufmaß-Experte nicht verfügbar.');
+  }
 });
 
 console.log('Telegram-Bot läuft (Polling-Modus).');
