@@ -48,8 +48,19 @@ BEFEHLE
 /merke <Text> Fakt manuell hinzufügen
 /vergiss <Nr> Fakt entfernen (Nummer aus /gedaechtnis)
 /komprimieren  Verläufe/Gedächtnis manuell verdichten
+/experten      alle Expertensysteme anzeigen
 /user          deine Chat-ID und Statistik (inkl. Rate-Limit-Status)
-/protokoll     letzte Ereignisse/Fehler`;
+/protokoll     letzte Ereignisse/Fehler
+
+🎯 EXPERTENSYSTEME
+Der Bot erkennt an deinen Schlüsselwörtern, welcher Experte zuständig ist:
+🔍 Recherche — Web-Suche, Fakten, aktuelle Infos (z.B. "suche nach …", "was ist …")
+🧾 Leistungserfassung — Rechnungen, Abrechnungen (in Arbeit)
+📐 Materialaufmaß — Maße, verbrauchte Mengen (in Arbeit)
+🛒 Bestellung — Material bestellen (in Arbeit)
+📦 Material-Rückgabe — Monteur bringt Material zurück (in Arbeit)
+🔧 Material-Entnahme — Material aus Lager entnehmen (in Arbeit)
+/experten zeigt alle Details und Status.`;
 
 function ladeBegruessung() {
   if (!fs.existsSync(BEGRUESSUNG_PATH)) {

@@ -181,14 +181,87 @@ data/
 - `kontext.js` — Minimaler API-Kontext (System-Prompt, Themen-Klassifikation)
 - `sicherheit.js` — URL-Blacklist, Output-Filter (gegen Prompt-Injection)
 - `ratelimit.js` — Pro-User-Limits (Stunde/Tag)
-- `web.js` — Web-Suche (Tavily) + URL-Fetch (Jina Reader)
+- `web.js` — Web-Suche (Brave Search API) + URL-Fetch (Jina Reader)
 - `tools.js` — Tool-Definitionen + Executor-Dispatcher
+- `experten/` — Expertensysteme (Plugin-Architektur)
+  - `index.js` — Registry: lädt alle Module, erkennt welches zur Nachricht passt
+  - `_template.js` — Vorlage für neue Module
+  - `recherche.js` — voll funktional (Web-Suche, Fakten)
+  - `leistungserfassung.js`, `materialaufmass.js`, `bestellung.js`, `material_rueckgabe.js`, `material_entnahme.js` — Stubs zum schrittweisen Befüllen
 - `transcribe.js` — AssemblyAI für Sprachnachrichten
 - `ocr.js` — Mistral OCR für Bilder/PDFs
 - `dokument.js` — Excel-/Word-Auslese
 - `protokoll.js` — Ereignisprotokoll
 - `begruessung.js` — Start-Anleitung (editierbar)
-- `providers/` — Anthropic, OpenAI, MiniMax (mit Tool-Use-Support für Anthropic/OpenAI)
+- `providers/` — Anthropic, OpenAI, MiniMax (Tool-Use für alle drei, MiniMax per XML-Parser)
+
+## Expertensysteme (Plugin-Architektur)
+
+Jeder Bot-Use-Case ist ein eigenes Modul unter `experten/`. Die Module werden automatisch geladen, der Bot erkennt anhand von Schlüsselwörtern, welcher Experte zur aktuellen Nachricht passt.
+
+### Aktuell verfügbare Experten
+
+| Experte | Status | Trigger (Auszug) |
+|---|---|---|
+| 🔍 Recherche | ✅ voll funktional | „suche nach", „was ist", „finde", „aktuell" |
+| 📐 Materialaufmaß | ✅ voll funktional | „aufmaß", „verlegt", „montiert" |
+| 🧾 Leistungserfassung | 🚧 Stub | „rechnung", „leistung", „abrechnung" |
+| 🛒 Bestellung | 🚧 Stub | „bestellung", „brauche", „einkauf" |
+| 📦 Material-Rückgabe | 🚧 Stub | „rückgabe", „zurückbringen", „retoure" |
+| 🔧 Material-Entnahme | 🚧 Stub | „entnahme", „verbrauch", „verbaue" |
+
+`/experten` zeigt alle Details und Trigger-Wörter im Bot.
+
+### 📐 Materialaufmaß im Detail
+
+**Workflow (eine Nachricht, alles drin):**
+```
+Du: "Aufmaß PRJ-2026-001, Badsanierung Müller, 12m Kupferrohr 22mm, 3 Wandscheiben DN20 Art-Nr WS-12345"
+Bot:  [1 API-Call → JSON-Extraktion → prüft Vollständigkeit → generiert PDF oder fragt einmal nach]
+```
+
+**Voraussetzungen** im `data/`-Baum:
+- `data/aufnahme_vorlage/` — die Muster-PDF (z.B. `Aufmass_Zienert_ausfuellbar.pdf`)
+- `data/style_sheet/` — optional, Formatierungs-Wünsche (PDF/TXT/MD)
+- `data/users/<chatId>/unterschrift.png` — Bild der Unterschrift (wird per Foto hochgeladen)
+
+**Verwendet das Zienert-AcRoForm-Schema** (`Aufmass_Zienert_ausfuellbar.pdf` mit 231 sprechenden Feldern):
+- Kopf: `projekt_nr`, `bauvorhaben`, `seite`, `seite_von`
+- 32 Positionszeilen × 7 Spalten: `pos_N`, `menge_N`, `me_N`, `artikelnr_N`, `bezeichnung_N`, `ep_N`, `gp_N`
+- Fuß: `datum`, `unterschrift_kunde`, `unterschrift_monteur`
+
+`ep_N` (Einzelpreis) und `gp_N` (Gesamtpreis) werden automatisch berechnet, wenn `einzelpreis` und `menge` gesetzt sind. `datum` wird mit dem heutigen Datum vorbelegt. Unterschriften bleiben für die händische Unterschrift nach dem Druck leer.
+
+**Anpassungen** sind direkt im Chat möglich: „ändere Position 2 auf 5", „Position 3 raus", „füge 2m Kupferrohr hinzu", „Bezeichnung war Heizung".
+
+**Abbrechen** jederzeit mit „stop", „abbrechen" oder „reset".
+
+### Eigenes Expertensystem hinzufügen
+
+1. Neue Datei in `experten/` anlegen, z.B. `experten/wetter.js`
+2. Die Schnittstelle aus `experten/_template.js` übernehmen
+3. Eigene Trigger, System-Prompt-Erweiterung, Logik definieren
+4. Beim nächsten Bot-Start wird das Modul automatisch geladen
+
+Beispiel:
+```js
+module.exports = {
+  id: 'wetter',
+  name: 'Wetter',
+  emoji: '🌤️',
+  description: 'Wetter für einen Ort abrufen.',
+  triggers: ['wetter'],
+  systemPromptAdd: 'Du bist im Wetter-Modus.',
+  implementiert: true,
+  verarbeite: async (input, kontext) => {
+    return { antwort: 'Sonnig, 23°C' };
+  }
+};
+```
+
+### Stubs schrittweise befüllen
+
+Für jeden Stub-Experten gibt es eine `verarbeite`-Funktion, die aktuell nur „noch nicht implementiert" zurückgibt. Sag einfach „ok, jetzt Leistungserfassung" und ich implementiere die Logik — Persistenz, JSON-Schemas, Export, was auch immer gebraucht wird.
 
 ## Sicherheit (Strikter Modus)
 

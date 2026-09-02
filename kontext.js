@@ -96,8 +96,13 @@ function leiteThemaNamenAb(text) {
   return woerter.length > 50 ? woerter.slice(0, 47) + '...' : woerter;
 }
 
-function baueHauptSystemPrompt(gedaechtnisText) {
+function baueHauptSystemPrompt(gedaechtnisText, expertenKontext) {
   let prompt = HAUPT_ROLLE;
+  if (expertenKontext) {
+    // Experten-Kontext wird VOR dem Gedächtnis eingefügt, damit die KI den
+    // Moduswechsel zuerst sieht und sich entsprechend verhält.
+    prompt += `\n\n${expertenKontext}`;
+  }
   if (gedaechtnisText) {
     prompt += `\n\nLANGZEIT-GEDÄCHTNIS ÜBER DIESEN NUTZER (immer beachten, wenn relevant):\n${gedaechtnisText}`;
   }

@@ -15,6 +15,7 @@
 
 require('dotenv').config();
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const TelegramBot = require('node-telegram-bot-api');
 const { transkribiere } = require('./transcribe');
@@ -28,6 +29,7 @@ const toolsModul = require('./tools');
 const sicherheit = require('./sicherheit');
 const ratelimit = require('./ratelimit');
 const benutzer = require('./benutzer');
+const experten = require('./experten');
 const { schreibeEintrag, leseLetzte } = require('./protokoll');
 const { ladeBegruessung } = require('./begruessung');
 const { getProvider } = require('./providers');
@@ -150,12 +152,55 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
 
   // 2) Kontext aufbauen
   const gedaechtnisText = gedaechtnis.ladeGedaechtnis(chatId);
-  const systemPrompt = kontext.baueHauptSystemPrompt(gedaechtnisText);
+
+  // 2a) Experten-Erkennung: passt die Nachricht zu einem registrierten
+  // Expertensystem? Wenn ja, wird dessen systemPromptAdd an den Haupt-Prompt
+  // angehängt und dessen verarbeite() aufgerufen.
+  const experte = experten.findeExperte(userText);
+  const expertenKontext = experte ? experte.systemPromptAdd : null;
+  const systemPrompt = kontext.baueHauptSystemPrompt(gedaechtnisText, expertenKontext);
+
+  if (experte) {
+    schreibeEintrag('Experte', `Aktiv: ${experte.id} (${chatId}) — Trigger erkannt in Nachricht`);
+  }
   const messages = kontext.baueHauptMessages(thema, userText, dokInhalt);
 
-  // 3) Haupt-KI-Antwort mit Tool-Loop (Web-Suche, URL-Fetch wenn Keys gesetzt)
-  const tools = toolsModul.verfuegbareTools(mainToolProvider);
-  const raw = await mainChatMitTools(chatId, systemPrompt, messages, tools);
+  // 3) Haupt-KI-Antwort mit Tool-Loop (Web-Suche, URL-Fetch wenn Keys gesetzt).
+  //    Wenn ein Experte aktiv ist und sein verarbeite() _delegate:'standard'
+  //    zurückgibt, läuft der Standard-Flow. Andernfalls wird die experten-eigene
+  //    Antwort direkt genommen (z.B. bei Stubs).
+  let raw;
+  let expertenErgebnis = null; // wird später für _sendDocument etc. gebraucht
+  if (experte && typeof experte.verarbeite === 'function') {
+    const input = {
+      chatId, text: userText, dokInhalt, thema,
+      systemPrompt, gedaechtnisText
+    };
+    const kontextHilfs = {
+      mainChat, lightChat, mainChatMitTools,
+      schreibeEintrag, bot
+    };
+    let ergebnis;
+    try {
+      ergebnis = await experte.verarbeite(input, kontextHilfs);
+    } catch (err) {
+      schreibeEintrag('Fehler', `Experte ${experte.id} abgestürzt (${chatId}): ${err.message}`);
+      ergebnis = { antwort: `Fehler im ${experte.name}-Modul: ${err.message}`, merkeHook: null };
+    }
+    expertenErgebnis = ergebnis;
+    if (ergebnis && ergebnis._delegate === 'standard') {
+      // Recherche-Experte: normaler Tool-Loop
+      const tools = toolsModul.verfuegbareTools(mainToolProvider);
+      raw = await mainChatMitTools(chatId, systemPrompt, messages, tools);
+    } else {
+      // Stub oder Experte mit eigener Antwort
+      raw = ergebnis.antwort || '';
+    }
+  } else {
+    // Kein Experte, normaler Standard-Flow
+    const tools = toolsModul.verfuegbareTools(mainToolProvider);
+    raw = await mainChatMitTools(chatId, systemPrompt, messages, tools);
+  }
 
   const { sichtbar, merkeFakt } = extrahiereMerkeHooks(raw);
 
@@ -176,9 +221,23 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
   // 6) Senden — ggf. mit Hinweis voran, falls der Filter rohe Tool-Calls
   //    o.Ä. abgefangen hat. Der User kriegt dann eine Erklärung statt dem
   //    verwirrenden Original-Output.
+  //    Wenn der Experte ein _sendDocument mitschickt (z.B. ein PDF), wird das
+  //    ebenfalls an den User geschickt.
   const hinweis = gefiltert.hinweis ? gefiltert.hinweis + '\n\n' : '';
   const text = hinweis + (gefiltert.text || '(keine Antwort)') + merkeHinweis;
   await sendeLang(chatId, text);
+
+  // Optional: Dokument (z.B. PDF) aus dem Experten-Result mitschicken
+  if (expertenErgebnis && expertenErgebnis._sendDocument) {
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(expertenErgebnis._sendDocument)) {
+        await bot.sendDocument(chatId, expertenErgebnis._sendDocument);
+      }
+    } catch (err) {
+      console.error('Konnte _sendDocument nicht senden:', err.message);
+    }
+  }
 
   // 7) In Themen-Historie anhängen (den gefilterten Text speichern — wir wollen
   //    nicht den rohen Output mit den gefilterten Geheimnissen persistieren)
@@ -467,6 +526,21 @@ bot.on('message', async (msg) => {
   if (msg.photo) {
     try {
       await mitTipptIndikator(chatId, async () => {
+        // Wenn ein Experte onPhoto unterstützt, leite das Foto dorthin
+        const experte = experten.ladeExperten().find((e) => typeof e.onPhoto === 'function');
+        // Heuristik: der Materialaufmaß-Experte fängt ALLE Fotos ab,
+        // wenn er eine aktive Session hat
+        const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
+        if (matExp && typeof matExp.onPhoto === 'function') {
+          const sessionDatei = path.join(userVerzeichnisFuerExperten(chatId), 'aufnahme_session.json');
+          if (fs.existsSync(sessionDatei)) {
+            const bestes = msg.photo[msg.photo.length - 1];
+            const r = await matExp.onPhoto(chatId, bestes.file_id, msg, { bot, schreibeEintrag });
+            if (r && r.antwort) await bot.sendMessage(chatId, r.antwort);
+            return;
+          }
+        }
+        // Standard: Foto per OCR verarbeiten
         const bestes = msg.photo[msg.photo.length - 1];
         const link = await bot.getFileLink(bestes.file_id);
         const res = await fetch(link);
@@ -484,6 +558,19 @@ bot.on('message', async (msg) => {
   if (msg.document) {
     try {
       await mitTipptIndikator(chatId, async () => {
+        // Wenn ein Experte onDocument unterstützt und eine aktive Session hat
+        const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
+        if (matExp && typeof matExp.onDocument === 'function') {
+          const sessionDatei = path.join(userVerzeichnisFuerExperten(chatId), 'aufnahme_session.json');
+          if (fs.existsSync(sessionDatei)) {
+            const r = await matExp.onDocument(chatId, msg.document.mime_type, msg.document.file_name, msg.document.file_id, { bot, schreibeEintrag });
+            if (r !== null) {
+              if (r && r.antwort) await bot.sendMessage(chatId, r.antwort);
+              return;
+            }
+          }
+        }
+        // Standard: Datei verarbeiten
         const link = await bot.getFileLink(msg.document.file_id);
         const res = await fetch(link);
         const buf = Buffer.from(await res.arrayBuffer());
@@ -496,6 +583,10 @@ bot.on('message', async (msg) => {
     }
   }
 });
+
+function userVerzeichnisFuerExperten(chatId) {
+  return path.join(__dirname, 'data', 'users', String(chatId));
+}
 
 // Foto / PDF / Excel / Word -> Text extrahieren -> normal weiterverarbeiten.
 async function importiereUndVerarbeite(buffer, mimeType, chatId, label) {
@@ -698,6 +789,18 @@ bot.onText(/\/wer-bin-ich/, (msg) => {
 bot.onText(/\/protokoll/, (msg) => {
   const text = leseLetzte(20);
   bot.sendMessage(msg.chat.id, text || 'Das Protokoll ist noch leer.');
+});
+
+// /experten zeigt alle registrierten Expertensysteme mit Status
+bot.onText(/\/experten/, (msg) => {
+  const liste = experten.listeStatus();
+  const zeilen = liste.map((e) => {
+    const status = e.implementiert ? '✅ aktiv' : '🚧 Stub';
+    return `${e.emoji} *${e.name}* — ${status}\n   ${e.description}\n   Trigger: ${e.triggers.slice(0, 4).join(', ')}${e.triggers.length > 4 ? ', …' : ''}`;
+  });
+  const text = '*Verfügbare Expertensysteme:*\n\n' + zeilen.join('\n\n') +
+    '\n\n_Schreib einfach los — der richtige Experte wird automatisch an deinen Schlüsselwörtern erkannt._';
+  bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/komprimieren/, async (msg) => {
