@@ -3,21 +3,42 @@
 # Zweck: ein Bauteil mit höherer Zulassung darf einen niedrigeren Bedarf
 # bedienen — nie umgekehrt. Und es wird ZULETZT angefasst, damit nicht ein
 # teurer Gas-Kugelhahn in einer Heizungsleitung landet, solange normale da sind.
+#
+# Zwei orthogonale Achsen:
+#  - bezeichnungen: WORFÜR ist das Bauteil zugelassen? (Anwendungsbereich)
+#  - pruefzeichen:  WELCHE Zertifizierungen trägt es? (in den Katalogen
+#                   abgedruckte Marken; ein und dasselbe Bauteil kann
+#                   mehrere Prüfzeichen tragen)
 
 # Von niedrig nach hoch. gas erfüllt trinkwasser und heizung mit.
 rangfolge: [heizung, trinkwasser, gas]
 
 bezeichnungen:
   heizung:
-    beschreibung: "Heizung, keine besondere Zulassung nötig"
+    beschreibung: 'Heizung, keine besondere Zulassung nötig'
     erkennen_an: [heizung, hz, heizungswasser, ohne zulassung]
   trinkwasser:
-    beschreibung: "Trinkwasser (DVGW W 270 / KTW)"
+    beschreibung: 'Trinkwasser (DVGW W 270 / KTW)'
     erkennen_an: [trinkwasser, tw, dvgw, ktw, w270, sanitaer, sanitär]
   gas:
-    beschreibung: "Gas (DVGW G 260)"
+    beschreibung: 'Gas (DVGW G 260)'
     erkennen_an: [gas, g260, gaszulassung, dvgw gas]
 
 # Wenn nichts erkennbar ist: die niedrigste Stufe annehmen und nachfragen,
 # sobald der Artikel in einen Bereich soll, der mehr verlangt.
 standard: heizung
+
+# Prüfzeichen — die in den Großhandelskatalogen abgedruckten Marken
+# (Index-Zählung: DVGW 819×, KTW 136×, WRAS 23×, KIWA 34×, ÖVGW 50×, PED 29×).
+# Sie sind KEIN Ersatz für den Anwendungsbereich — ein DVGW-gekennzeichnetes
+# Bauteil kann je nach Zertifikat für Trinkwasser ODER Gas zugelassen sein.
+# Die Engine wertet sie vorerst nur als Fakt aus; die Auswertung im
+# Vorgangsmotor ist Stufe 5 (Dazulernen) vorbehalten.
+pruefzeichen:
+  dvgw:  { beschreibung: 'DVGW — Deutsche Vereinigung des Gas- und Wasserfaches',         erkennen_an: [dvgw] }
+  ktw:   { beschreibung: 'KTW — Kunststoffe in Trinkwasser (positive List)',              erkennen_an: [ktw] }
+  w270:  { beschreibung: 'DVGW W 270 — Mikroorganismenwachstum auf Werkstoffen in TW',     erkennen_an: [w270, 'w 270'] }
+  wras:  { beschreibung: 'WRAS — Water Regulations Advisory Service (UK Trinkwasser)',    erkennen_an: [wras] }
+  kiwa:  { beschreibung: 'KIWA — niederländische Zertifizierung Trinkwasser',             erkennen_an: [kiwa] }
+  oevgw: { beschreibung: 'ÖVGW — Österreichische Vereinigung für das Gas- und Wasserfach', erkennen_an: [övgw, oevgw] }
+  ped:   { beschreibung: 'PED — EU-Druckgeräterichtlinie (Pressure Equipment Directive)',   erkennen_an: [ped] }

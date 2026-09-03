@@ -17,16 +17,40 @@ material:
   "v2a":        { bedeutet: edelstahl }
   "v4a":        { bedeutet: edelstahl }
   cu:           { bedeutet: kupfer }
-  verzinkt:     { bedeutet: stahl_verzinkt, gilt_fuer: [rohr, bogen, t_stueck, muffe] }
-  vz:           { bedeutet: stahl_verzinkt, gilt_fuer: [rohr, bogen, t_stueck, muffe] }
+  temperguss:   { bedeutet: temperguss }
+  c_stahl:      { bedeutet: c_stahl,     gilt_fuer: [rohr, bogen, t_stueck, muffe] }
+  bronze:       { bedeutet: siliziumbronze }
+  guss:         { bedeutet: gusseisen }
+  pex:          { bedeutet: pe_x,        gilt_fuer: [rohr] }
+  "pe-x":       { bedeutet: pe_x,        gilt_fuer: [rohr] }
   mehrschicht:  { bedeutet: verbundrohr, gilt_fuer: [rohr] }
   alupex:       { bedeutet: verbundrohr, gilt_fuer: [rohr] }
+
+# Oberfläche — eigenes Merkmal, NICHT der Werkstoff. Ein verzinktes Stahlrohr
+# ist aus Stahl mit verzinkter Oberfläche; die Kataloge führen dafür eine
+# eigene Spalte (über 3000 Tabellen).
+oberflaeche:
+  vz:            { bedeutet: verzinkt }
+  feuerverzinkt: { bedeutet: verzinkt }
+  chrom:         { bedeutet: verchromt }
+  cr:            { bedeutet: verchromt }
+  nickel:        { bedeutet: vernickelt }
+  blank:         { bedeutet: blank }
+  roh:           { bedeutet: blank }
+  pulverbeschichtet: { bedeutet: pulverbeschichtet }
 
 presssystem:
   profipress:   { bedeutet: viega_profipress }
   sanpress:     { bedeutet: viega_sanpress }
   mapress:      { bedeutet: geberit_mapress }
   megapress:    { bedeutet: viega_megapress }
+  prestabo:     { bedeutet: viega_prestabo }
+  temponox:     { bedeutet: viega_temponox }
+  raxofix:      { bedeutet: viega_raxofix }
+  smartpress:   { bedeutet: viega_smartpress }
+  geopress:     { bedeutet: geberit_geopress }
+  # SC-Contur ist KEIN Presssystem, sondern Viegas Sicherheitsmerkmal
+  # (unverpresst undicht). Steht deshalb bewusst nicht hier.
 
 # Presskonturen. Verwechslung ist hier sicherheitsrelevant, deshalb wird
 # NICHT geraten: ist die Kontur unklar, fragt der Bot nach.

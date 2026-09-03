@@ -11,6 +11,8 @@ stahl_gewinde:
   bezeichnung: "Stahl / Rotguss, Gewinde"
   gilt_fuer: [stahl, rotguss, messing, temperguss]
   tabelle:
+    - { zoll: "1/8", dn: 6,  ad: 10.2 }
+    - { zoll: "1/4", dn: 8,  ad: 13.5 }
     - { zoll: "3/8", dn: 10, ad: 17.2 }
     - { zoll: "1/2", dn: 15, ad: 21.3 }
     - { zoll: "3/4", dn: 20, ad: 26.9 }
@@ -50,10 +52,14 @@ verbundrohr:
     - { ad: 63, wand: 4.5 }
 
 # Wie Zollangaben geschrieben werden dürfen. Ergebnis ist immer die Bruchform.
+# Die Katalog-Schreibweise mit Zollzeichen ("1 1/4"") ist hier zur Klarheit
+# aufgeführt; die Engine wirft das " vor dem Vergleich weg.
 zoll_schreibweisen:
-  "1/2": ["halb zoll", "halbzoll", "1/2\"", "0.5", "dn15 zoll"]
-  "3/4": ["dreiviertel", "dreiviertel zoll", "3/4\"", "0.75"]
-  "1":   ["ein zoll", "einzoll", "1\""]
-  "5/4": ["fünfviertel", "funfviertel", "1 1/4", "1.25"]
-  "6/4": ["sechsviertel", "1 1/2", "1.5", "anderthalb zoll"]
-  "2":   ["zwei zoll", "2\""]
+  "1/8": ['einachtel', '1/8"', 'dn6 zoll']
+  "1/4": ['einviertel', '1/4"', 'dn8 zoll']
+  "1/2": ['halb zoll', 'halbzoll', '1/2"', '0.5', 'dn15 zoll']
+  "3/4": ['dreiviertel', 'dreiviertel zoll', '3/4"', '0.75']
+  "1":   ['ein zoll', 'einzoll', '1"']
+  "5/4": ['fünfviertel', 'funfviertel', '1 1/4', '1 1/4"', '1.25']
+  "6/4": ['sechsviertel', '1 1/2', '1 1/2"', '1.5', 'anderthalb zoll']
+  "2":   ['zwei zoll', '2"']

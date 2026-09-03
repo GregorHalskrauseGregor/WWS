@@ -8,3 +8,6 @@ data/
 
 # Git-Aufraeumreste (entstehen nur auf gemounteten Laufwerken ohne Loeschrecht)
 .git/stale/
+
+# Arbeitsmaterial, gehoert nicht ins Repo (36 MB Katalog-Rohtexte)
+Kataloge Shops/

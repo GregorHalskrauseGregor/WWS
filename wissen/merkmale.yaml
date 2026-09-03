@@ -42,6 +42,38 @@ global:
     pflicht_fuer: [kugelhahn]
     gilt_nicht_fuer: [befestigung, werkzeug, sonstiges]
 
+  # Oberfläche ist NICHT der Werkstoff. In den Großhandelskatalogen ist sie die
+  # zweithäufigste Merkmalsspalte überhaupt (über 3000 Tabellen) — verchromt,
+  # verzinkt, vernickelt, pulverbeschichtet. Ein verchromter und ein blanker
+  # Rotguss-Kugelhahn sind verschiedene Artikel.
+  oberflaeche:
+    stufe: erwartet
+    beschreibung: "Oberfläche — verchromt, verzinkt, vernickelt, blank, lackiert."
+    frage: "Welche Oberfläche — verchromt, verzinkt, blank?"
+    gilt_nicht_fuer: [sonstiges]
+
+  # Der Sammelbegriff der Kataloge für alles, was eine Bauform unterscheidet
+  # und keine eigene Spalte hat. Bewusst freitextlich.
+  ausfuehrung:
+    stufe: optional
+    beschreibung: "Bauform oder Variante, die sonst nirgends passt."
+    frage: "Gibt es eine besondere Ausführung?"
+    gilt_nicht_fuer: []
+
+  # Verpackungseinheit. Im Katalog eine eigene Spalte (VPE) — der Grund, warum
+  # "eine Packung Dichtungen" eine sinnvolle Mengenangabe ist.
+  vpe:
+    stufe: optional
+    beschreibung: "Verpackungseinheit, z. B. 10 Stück je Beutel."
+    frage: "Wie viele Stück sind in einer Verpackungseinheit?"
+    gilt_nicht_fuer: []
+
+  farbe:
+    stufe: optional
+    beschreibung: "Farbe — vor allem bei Sanitärkeramik und Möbeln."
+    frage: "Welche Farbe?"
+    gilt_nicht_fuer: [rohr, bogen, t_stueck, muffe, reduktion]
+
   marke:
     stufe: optional
     beschreibung: "Hersteller."
@@ -50,7 +82,7 @@ global:
 
   artnr:
     stufe: optional
-    beschreibung: "Artikelnummer des Herstellers."
+    beschreibung: "Artikelnummer des Herstellers (im Katalog: Werksnr.)."
     frage: "Wie lautet die Artikelnummer?"
     gilt_nicht_fuer: []
 

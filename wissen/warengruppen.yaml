@@ -2,82 +2,205 @@
 #
 # Beantwortet Fragen auf jeder Ebene: "alle Absperrarmaturen", "alle
 # Kugelhähne", "alle Fittinge in DN20". Die oberste Ebene ist zugleich die
-# Kategorie in der Lagerdatei — deshalb heißt sie wie bisher, damit bestehende
-# Zeilen gültig bleiben.
+# Kategorie in der Lagerdatei — deshalb heißen die obersten Knoten wie
+# bisher, damit bestehende Zeilen gültig bleiben.
 #
-# WICHTIG — was hier NICHT hineingehört: das Gewerk (Heizung, Trinkwasser, Gas).
-# Ein Kugelhahn DN15 ist je nach Zulassung für Heizung ODER Trinkwasser ODER
-# beides. Ein Baum kennt aber nur einen Platz je Artikel. Deshalb ist der
-# Einsatzbereich ein eigenes, mehrwertiges Merkmal (siehe merkmale.yaml) und
-# steht in artikelklassen.yaml je Artikelart.
+# Aufgebaut aus den 28.606 Index-Einträgen der Großhandelskataloge
+# (wissen/_katalogauswertung/). Drei Befunde prägen die Form:
+#
+#  1. Der Katalog gliedert nach WERKSTOFF, was hier ein Merkmal ist.
+#     Pressfittings aus Edelstahl, C-Stahl und Kupfer sind im Katalog drei
+#     Kapitel, hier EINE Warengruppe plus Merkmal `material`. Der Baum
+#     bleibt merkmals-orthogonal.
+#
+#  2. Im Katalog ist das häufigste Kopfwort die MARKE, im Lager ist der
+#     ARTIKELTYP die Identität. Marken (Viega, Geberit, Brötje, …) sind
+#     deshalb ein Merkmal, kein Ast.
+#
+#  3. Das GEWERK (Heizung, Trinkwasser, Gas) ist mehrwertig — derselbe
+#     Kugelhahn kann in mehreren Gewerken zugelassen sein. Es steht deshalb
+#     NICHT im Baum, sondern in artikelklassen.yaml unter `einsatzbereiche`.
 #
 # Pflegehinweis: "klassen" verweist auf Artikelarten aus artikelklassen.yaml.
-# Eine Ebene ohne "kinder" ist ein Blatt.
+# Eine Ebene ohne "kinder" ist ein Blatt. Klassen dürfen an jedem Knoten
+# sitzen — die Engine sammelt rekursiv von oben nach unten.
 
+# ───────────────────────────────────────────────────────── Rohre & Leitungen
+# Material ist ein Merkmal: Kupfer, Stahl, Edelstahl, Mehrschichtverbund,
+# PE-X, PP. Katalogkapitel Installation G (Kupfer), H (Edelstahl-Rohre),
+# I (PP-Abfluss); Heizung C (Nahwärme); Wasserwelt (Trinkwasserrohre).
 rohre_leitungen:
   name: "Rohre & Leitungen"
   kinder:
-    metallrohr:   { name: "Metallrohre",        klassen: [rohr] }
-    kunststoff:   { name: "Kunststoff & Verbund", klassen: [] }
-    abwasserrohr: { name: "Abwasserrohre",      klassen: [] }
+    metallrohr:   { name: "Metallrohre",          klassen: [rohr] }
+    verbundrohr:  { name: "Mehrschichtverbund",   klassen: [] }
+    kunststoff:   { name: "Kunststoffrohre",      klassen: [] }
+    abwasserrohr: { name: "Abwasserrohre",        klassen: [] }
+    fernwaerme:   { name: "Fernwärme & Nahwärme", klassen: [] }
 
+# ──────────────────────────────────────────── Fittinge & Verbindungstechnik
+# Verbindungstechnik, nicht Material. Press/Löt/Gewinde/Schweiß/Flansch —
+# jedes für sich material-orthogonal. Katalogkapitel Installation A (Fittings,
+# FlowFit, PushFit), B (Press Edelstahl), C (Press C-Stahl), D (Press
+# Rotguss/Bronze), E (Gewindefittings, Verschraubungen, Klemmring),
+# F (Flansche, Stahlschweißformstücke), G (Löt), H (Edelstahl-Formteile).
 fittinge:
   name: "Fittinge & Verbindungstechnik"
   kinder:
-    formstuecke:  { name: "Formstücke",  klassen: [bogen, t_stueck, reduktion] }
-    verbinder:    { name: "Verbinder",   klassen: [muffe] }
-    uebergaenge:  { name: "Übergänge",   klassen: [] }
+    press:       { name: "Pressfittings",                  klassen: [] }
+    loet:        { name: "Löt- & Schweißfittings",         klassen: [] }
+    gewinde:     { name: "Gewindefittings & Verschraubungen", klassen: [] }
+    flansch:     { name: "Flansche & Dichtungen",          klassen: [] }
+    formstuecke: { name: "Formstücke",                     klassen: [bogen, t_stueck] }
+    verbinder:   { name: "Verbinder",                      klassen: [muffe] }
+    uebergaenge: { name: "Übergänge",                      klassen: [reduktion] }
 
+# ─────────────────────────────────────────────────────── Armaturen & Ventile
+# Kugelhähne, Absperrventile, Regulierventile, Stellmotoren, Mischer,
+# Sicherheitsarmaturen, Heizkörperanschluss, Sanitärarmaturen.
+# Katalogkapitel Heizung K (Heizkörperventile), L (Strangregulierung,
+# Absperrventile), O (Mischer, Stellmotoren); Installation H (Kugelhähne,
+# Absperrklappen), O (Trinkwasser-Ventile, Systemtrenner, Wasserzähler);
+# Sanitär B/C (Sanitärarmaturen), U (Selbstschluss), V (Elektronik).
 armaturen:
   name: "Armaturen & Ventile"
   kinder:
-    absperr:      { name: "Absperrarmaturen", klassen: [kugelhahn] }
-    regelung:     { name: "Regelarmaturen",   klassen: [] }
-    sicherheit:   { name: "Sicherheitsarmaturen", klassen: [] }
+    absperr:           { name: "Absperrarmaturen",     klassen: [kugelhahn] }
+    regelung:          { name: "Regelarmaturen",       klassen: [] }
+    sicherheit:        { name: "Sicherheitsarmaturen", klassen: [] }
+    heizkoerperventil: { name: "Heizkörperventile",    klassen: [] }
+    sanit:             { name: "Sanitärarmaturen",     klassen: [] }
 
+# ─────────────────────────────────────────────────────── Pumpen & Antriebe
+# Umwälzpumpen (Heizung), Druckerhöhung, Hebeanlagen, Kondensat,
+# Zirkulation. Material (Gusseisen/Edelstahl) ist ein Merkmal.
+# Katalogkapitel Heizung M; Wasserwelt A (Hauswasserwerke), B (Hebeanlagen).
 pumpen:
   name: "Pumpen & Antriebe"
   kinder:
-    umwaelz:      { name: "Umwälzpumpen", klassen: [pumpe] }
-    druckerhoehung: { name: "Druckerhöhung", klassen: [] }
+    umwaelz:        { name: "Umwälzpumpen",             klassen: [pumpe] }
+    druckerhoehung: { name: "Druckerhöhung",            klassen: [] }
+    hebeanlage:     { name: "Hebeanlagen & Schmutzwasser", klassen: [] }
+    zirkulation:    { name: "Zirkulationspumpen",       klassen: [] }
+    solar:          { name: "Solare Umwälzpumpen",      klassen: [] }
 
+# ───────────────────────────────────────────────────────── Wärmeerzeugung
+# Kessel/Thermen, Wärmepumpen, Solarthermie, Festbrennstoff, Fernwärme,
+# BHKW sowie das Kesselzubehör (Ausdehnung, Manometer, Sicherheitsventile).
+# Katalogkapitel Heizung A–E, G, N.
 waermeerzeugung:
   name: "Wärmeerzeugung"
   kinder:
-    kessel:       { name: "Kessel & Thermen", klassen: [] }
-    waermepumpe:  { name: "Wärmepumpen",      klassen: [] }
-    speicher:     { name: "Speicher",         klassen: [] }
+    kessel:         { name: "Kessel & Thermen",             klassen: [] }
+    waermepumpe:    { name: "Wärmepumpen",                  klassen: [] }
+    bhwk:           { name: "Blockheizkraftwerke",          klassen: [] }
+    festbrennstoff: { name: "Festbrennstoff",               klassen: [] }
+    solar:          { name: "Solarthermie",                 klassen: [] }
+    fern:           { name: "Fern- & Nahwärme",             klassen: [] }
+    zubehoer:       { name: "Kesselzubehör & Druckhaltung", klassen: [] }
 
-heizkoerper:
-  name: "Heizkörper & Flächenheizung"
+# ─────────────────────────────────── Speicher & Warmwasserbereitung
+# Warmwasserspeicher, Pufferspeicher, Frischwasserstation, Durchlauferhitzer.
+# Hygiene-Kombispeicher, Ladespeicher, Solarspeicher. Bewusst von der
+# Wärmeerzeugung getrennt: ein Speicher kann zu jedem Erzeuger gehören.
+# Katalogkapitel Heizung E (Solar-Pufferspeicherzentralen), F, P
+# (Durchlauferhitzer); Sanitär P.
+speicher:
+  name: "Speicher & Warmwasserbereitung"
   kinder:
-    radiator:     { name: "Heizkörper",       klassen: [] }
-    flaeche:      { name: "Flächenheizung",   klassen: [] }
+    warmwasser:   { name: "Warmwasserspeicher",     klassen: [] }
+    puffer:       { name: "Pufferspeicher",         klassen: [] }
+    frischwasser: { name: "Frischwasserstationen",  klassen: [] }
+    durchlauf:    { name: "Durchlauferhitzer",      klassen: [] }
+    lade:         { name: "Lade- & Kombispeicher",  klassen: [] }
 
+# ─────────────────────────────────────────── Heizflächen & Abgassystem
+# Heizkörper, Fußboden-/Wand-/Deckenheizung, das Abgassystem (LAS, Kamin,
+# Verbindungsleitung). Die Anschlussarmaturen (Heizkörperventile) liegen
+# bewusst unter armaturen — sie sind technisch Ventile, keine Heizfläche.
+# Katalogkapitel Heizung H (Abgas), I (Heizkörper), J (Fußbodenheizung).
+heizflaechen:
+  name: "Heizflächen & Abgassystem"
+  kinder:
+    radiator: { name: "Heizkörper",         klassen: [] }
+    flaeche:  { name: "Flächenheizung",     klassen: [] }
+    abgas:    { name: "Abgassysteme & LAS", klassen: [] }
+    zubehoer: { name: "Heizkörper-Zubehör", klassen: [] }
+
+# ─────────────────────────────────────────────────────────── Sanitär & Bad
+# Keramik, Wannen, Brausen, Möbel, Installationselemente, Badausstattung,
+# Ablaufarmaturen, Spülen, Spender, Reinigung. Sicherheitsausstattung
+# (Haltegriffe, Klappsitze) und Installationselemente (TECE, Geberit)
+# liegen hier — sie sind Sanitär-Objekte, keine Rohr-Fittinge.
+# Katalogkapitel Sanitär A–W.
 sanitaer:
-  name: "Sanitärobjekte"
+  name: "Sanitär & Bad"
   kinder:
-    keramik:      { name: "Keramik",          klassen: [] }
-    wanne_dusche: { name: "Wannen & Duschen", klassen: [] }
+    keramik:              { name: "Keramik (WC, Urinal, Waschtisch)", klassen: [] }
+    wanne:                { name: "Wannen & Duschwannen",  klassen: [] }
+    brause:               { name: "Brausen & Duschsysteme", klassen: [] }
+    abtrennung:           { name: "Duschabtrennungen",     klassen: [] }
+    installationselement: { name: "Installationselemente & Betätigungen", klassen: [] }
+    moebel:               { name: "Badmöbel & Spiegelschränke", klassen: [] }
+    ausstattung:          { name: "Badausstattung & Spender", klassen: [] }
+    sicherheit:           { name: "Sicherheit & Barrierefreiheit", klassen: [] }
+    ablauf:               { name: "Ablaufarmaturen & Siphons", klassen: [] }
+    spuele:               { name: "Spülen & Becken",       klassen: [] }
+    reinigung:            { name: "Reinigung & Pflege",    klassen: [] }
 
+# ───────────────────────────────────────────────────── Lüftung & Klima
+# Lüftungsgeräte (zentral/dezentral), Klimageräte (Split/Multisplit),
+# Ventilatoren, Kanäle (Wickelfalzrohr, Formteile, Schalldämpfer),
+# Gitter, Volumenstromregler, Filter, Regelung.
+# Katalogkapitel Lüftung A–M; Klima A–G.
+lueftung_klima:
+  name: "Lüftung & Klima"
+  kinder:
+    lueftungsgeraet: { name: "Lüftungsgeräte",      klassen: [] }
+    klima:           { name: "Klimageräte",         klassen: [] }
+    ventilator:      { name: "Ventilatoren",        klassen: [] }
+    kanal:           { name: "Kanäle & Formteile",  klassen: [] }
+    gitter:          { name: "Gitter & Durchlässe", klassen: [] }
+    regelung:        { name: "Regelung & MSR",      klassen: [] }
+    filter:          { name: "Filter & Zubehör",    klassen: [] }
+
+# ───────────────────────────────────────────────── Dämmung & Brandschutz
+# Rohrisolierung, Schallschutz (Schalldämpfer), Brandschutz (Manschetten,
+# Klappen, Abschottungen), Begleitheizung. Brandschutz und Dämmung sind
+# im Katalog oft zusammen — und der Brandschutz ist bei Installations-
+# durchführungen ohnehin Voraussetzung für jede Dämmung.
+# Katalogkapitel Installation L (Isolierung, Begleitheizung), P
+# (Brandschutz); Lüftung H (Schalldämpfer).
 daemmung:
-  name: "Dämmung & Isolierung"
-  kinder: {}
-
-befestigung:
-  name: "Befestigung & Montagematerial"
+  name: "Dämmung & Brandschutz"
   kinder:
-    schellen:     { name: "Schellen",     klassen: [befestigung] }
-    verbindungsmittel: { name: "Schrauben & Dübel", klassen: [] }
+    rohrisolierung: { name: "Rohrisolierung", klassen: [] }
+    schall:         { name: "Schallschutz",   klassen: [] }
+    brandschutz:    { name: "Brandschutz",    klassen: [] }
+    begleitheizung: { name: "Begleitheizung", klassen: [] }
 
-elektro:
-  name: "Elektro & Steuerungstechnik"
-  kinder: {}
+# ─────────────────────────────────────────── Befestigung, Montage & Elektro
+# Rohrschellen, Schrauben, Dübel, Montageschienen, Elektromaterial.
+# Elektro hier, weil die Installationskapitel R (Kabel, Stecker) und
+# Lüftung L (Befestigung) im selben Katalogteil stehen; eine eigene
+# Top-Ebene wäre für die wenigen Positionen zu dünn. Kann bei Bedarf
+# später eigene Ebene werden.
+# Katalogkapitel Installation K (Rohrschellen, Montage), R (Elektro);
+# Lüftung L (Befestigung).
+befestigung:
+  name: "Befestigung, Montage & Elektro"
+  kinder:
+    schellen:          { name: "Rohrschellen & Befestigungsschellen", klassen: [befestigung] }
+    verbindungsmittel: { name: "Schrauben, Dübel & Anker", klassen: [] }
+    montagesystem:     { name: "Montagesysteme & Schienen", klassen: [] }
+    hauseinfuehrung:   { name: "Hauseinführungen & Dichtungen", klassen: [] }
+    elektro:           { name: "Elektromaterial",       klassen: [] }
 
-werkzeug:
-  name: "Werkzeug & Verbrauchsmaterial"
-  kinder: {}
-
+# ─────────────────────────────────────────────────────────────── Sonstiges
+# Auffangklasse für Werkzeug, Verbrauchsmaterial, Kleinkram. Bewusst
+# genügsam — der Bot schlägt eine eigene Klasse vor, wenn dieselbe
+# Art hier öfter landet.
 sonstiges:
   name: "Sonstiges"
   kinder: {}
+  klassen: [sonstiges]

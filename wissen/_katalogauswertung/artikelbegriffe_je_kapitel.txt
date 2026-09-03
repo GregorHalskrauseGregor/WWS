@@ -1,0 +1,164 @@
+--- GC_Heizung A
+    Gas-Brennwert-Wandkessel, Brauchwasserspeicher, Standkessel, Gas-Brennwert-Standkessel, Standspeicher, Gas-Brennwert-Wärmezentrum, Gas-Heizwert-Wandkessel, Öl-Brennwert-Standkessel, Wandkessel, ENERGIE, Abgassystem, Abgassysteme, Blockheizkraftwerke, Calenta, EcoTherm, EuroCondens, Gas-Brennwert-Kessel, Gas-Brennwert-Standheizkessel, Gas-Brennwerttherme, Gas-Heizwert-Thermen, Mobile, Multifunktionsspeicher
+--- GC_Heizung B
+    Wärmepumpen, Heizungswärmepumpen, Warmwasserspeicher, Abluftwärmepumpen, Befestigungsmaterial, Befestigungstechnik, Compress, Heizwasser-Durchlauferhitzer, Kompakt, Mono, Power-to-Heat, Pufferspeicher, Sole-Füll, Speicher, Wärmepumpenanschlusspakete, Wärmepumpen-Pufferspeicher, Wärmepumpenspeicher, Wärmepumpen-Zubehör, Wärmezentralen, Zuluftwärmepumpen, Zurüstsätze
+--- GC_Heizung C
+    Fernwärmeleitungen, Wohnungsstationen, Fernleitungsrohre, FLEXSTAR, Microflex, RAUTHERMEX, RAUVIPEX, RAUVITHERM, Thermo, Fittingsystem, Nahwärmeleitungen, Nahwärmeübergabestationen, Quattro, Rohre, Rohrsysteme, Supra, Systemzubehör, Übergabestationen, Wärmepumpen-Zubehörsets, Wipex, Wärmepumpenanschlusspakete
+--- GC_Heizung D
+    Pelletkessel, Festbrennstoffkessel, Holzvergaserkessel, Pelletlager, Scheitholzkessel, Befüllstutzen, Befüllsystem, Entnahmeeinheiten, Festbrennstoffkesselregler, Füllstandsanzeiger, Hackgutkessel, Herde, Hydraulikmodule, Hydraulikstationen, Kombiheizkessel, Maulwurfsaustragungen, Modul-Schichtspeicher, Öfen, Pelletboxen, Pelleterdlager, PelletsCompact, PelletsUnit
+--- GC_Heizung E
+    Schnellverrohrungssystem, Solar-Pufferspeicherzentralen, Überspannungsschutz, AEROLINE, Ausdehnungsgefäße, Brauchwassermischer, Brauchwasser-Zirkulationsset, Durchlaufwarmwassermodule, Frischwasser-Schichtkomfortspeicher, HydroComfort, Kappenventile, KFE-Kugelhähne, Kollektorfühler, Kollektor-Tauchhülsenfühler, Luftabscheider, Mess, Prüfkoffer, Refraktometer, Schichtenpufferspeicher, Schnellentlüfter, Sicherheitsventile, Solar-Ausdehnungsgefäße
+--- GC_Heizung F
+    Warmwasserspeicher, Plattenwärmetauscher, Frischwassermodule, Pufferspeicher, Wärmetauscher, Power-to-Heat, Anschlussverschraubungen, Brauchwasserbereiter, CPSH, CPSK, CWPPS, Elektro-Heizpatronen, Frischwasserstationen, Hygiene-Kombispeicher, Kombi-Pufferspeicher, Ladespeicher, Leckagewannen, Pumpengruppen, Rippenrohrwärmetauscher, Solarspeicher, Speicherdämmungen, Speicherlademodule
+--- GC_Heizung G
+    Ausdehnungsgefäße, Druckausdehnungsgefäße, Manometer, Abscheider, Präzisionsdruckhaltungen, Aalberts, AguaClean, AguaSave, Compresso, Füllarmaturen, Kesselzubehör, Lufttöpfe, Röhrenfeder-Manometer, Variomat, Efidirt, Honeywell, Kappenventile, Anti-Schlamm-Armaturen, Aquapresso, Aufbereitungsmodul, Basis, Bimetall-Zeigerthermometer
+--- GC_Heizung H
+    Abgassystem, Abgasrohre, Verbindungsleitung, Abgasklappen, Abgaspakete, Doppelwandiges, Feinstaubabscheider, Feueraluminierte, Partikelabscheider, Rauch, SECO-Plus, UNIFLEX, UNITEC, UNITHERM, Ventilatoren, VENTITOP, VESCO, Wäscheabwurfschacht, Zugbegrenzer
+--- GC_Heizung I
+    Flachheizkörper, Heizkörper, Heizkörperbefestigungen, EuroProfil, Fertigheizkörper, Kompaktheizkörper, Ventileinsätze, Austauschheizkörper, Bohrkonsolen, EuroPlan, Hygiene, Profil, Schnellmontage-Konsolensätze, Solitär, Tieftemperaturheizkörper, Vitramo, Ablagen, Accessoires, Anschlussstopfen, Austausch, Befestigungen, Blindstopfen
+--- GC_Heizung J
+    Fußbodenheizungen, U.S.H., Randdämmstreifen, Trockenbausystem, Verteilerschränke, Comfort, Noppenplatten, Regeltechnik, Vario, SPEED, Klettsystem, Anschlussverschraubungen, Deckenheizungen, Einzelraumregelboxen, Einzelraumregelungen, FAST, Renovis, Tacker, TOP15, TOP20, TOP30, Verteiler
+--- GC_Heizung K
+    Heizkörperverschraubungen, Ventilunterteile, Fühlerelemente, Thermostatköpfe, Design-Armaturen, Anschlussarmaturen, Heizkörperrücklaufverschraubungen, Schwarzrohre, Comap, Anschlussverschraubungen, Einrohrventile, Elektronischer, Hahnblock-Verschraubungen, Heizkörperlanzenventile, Heizkörperthermostatventile, Heizkörperventile, Kunststoffrosetten, Mittenanschlussarmaturen, Raumtemperaturregelungen, Regulux, Regutec, Stahlrohradapter
+--- GC_Heizung L
+    Strangregulier-Armaturen, Absperrventile, Kugelhähne, Rückschlagventile, STENFLEX, Wärmezähler, Doppelkammer, Gewindeflanschklappen, Kesselverteiler, SISTO, Stahl, Zwischenflanschklappen, Modulbauweise, Sensus, Taco, Absperrklappen, ASTRA, Automatische, BOA-S, BOAX, EURO-WEDI, FABA-Plus
+--- GC_Heizung M
+    BlueOne, Zirkulationspumpen, Heizungspumpen, Brauchwasserpumpen, Heizungsumwälzpumpen, Hocheffizienz-TWW-Zirkulationspumpen, Kondensatpumpen, Pumpenanschlussverschraubungen, Trinkwasser-Zirkulationspumpen, Universal-Motoren, Powerflow, Rückschlagventile, Schwerkraftbremsen
+--- GC_Heizung N
+    Heizölfilter, Aufstellvarianten, Gasarmaturen, Oilpress, SENTRY, Sicherheitstanks, Loro-X, Abgasabführung, Absperreinrichtungen, Anschlusskombinationen, Auftriebssicherungen, Auslaufsicherungen, Bindemittel, Domdeckel, Doppel-Kugelfußventile, Doppelwand-Tanks, Druck, Druckknopfhähne, Druckregler, Eckerle, Einstrangfilter, Entlüftungshauben
+--- GC_Heizung O
+    Mischer, Stellmotoren, Antriebe, Dreiwegeventile, Feldgeräte, Fernwärmeregler, Heizungsregler, Hubventile, Kesselkreis-Regelthermostate, Kesselschaltfelder, Kugelhähne, Regelthermostate, Stellantriebe, Stellventile, Umschaltventile, Ventile, Verschraubungen, Zonenventile
+--- GC_Installation A
+    Rohre, Fittings, FlowFit, Rohrinstallationssysteme, Werkzeuge, Formteile, Pressfittings, PushFit, TOOLS, Kugelhähne, Kupplungen, Modellreihe, Raxofix, Systemrohre, Universalrohre, Übergänge, Armaturenanschlüsse, Dosen, Ergänzungsteile, Gewindefittings, Installationssysteme, Klemmfittings
+--- GC_Installation B
+    Installationssysteme, Pressfitting-System, Pressfittings, Rohre, Dichtringe, Muffen, Reduzierstücke, T-Stücke, UP-Absperrventile
+--- GC_Installation C
+    Formteile, Rohre, Installationssysteme, C-Stahl, Kugelhähne, Pressfittings, Werkzeuge
+--- GC_Installation D
+    Pressfitting-System, B-Press, Rotguss, Installationssysteme, Presswerkzeuge, Bronze, Entgrater, Rohrschneider
+--- GC_Installation E
+    Verschraubungen, Dichtschellen, Stahlrohr-Verschraubungen, Anschweißnippel, Bogen, Doppelnippel, Edelstahl-Gewindefittings, Gewindefittings, Gewindenippel, Gewinderohre, Hydraulikrohre, Kappen, Klemmflansche, Klemmflanschverbindungen, Klemmringverschraubungen, Klemmverbinder, Kreuzstücke, Kupplungen, Messing, Muffen, Reduktionsdoppelnippel, Reduktionsmuffen
+--- GC_Installation F
+    Rohrschellen, Blindflansche, Böden, Bunde, Dichtungen, Einschweißbögen, Flanschdichtungen, Formstücke, Gewindeflansche, Klöpperböden, Losflansche, Maschinenschrauben, Reduzierstücke, Rohrbögen, Sattelstutzen, Schrauben, Stahlflansche, Stahlschweißformstücke, T-Stücke, Vorschweißflansche
+--- GC_Installation G
+    Kupferrohre, Rohre, Fittings, Lötfittings, Verbindungsteile, Kupferrohre-Hartlötprogramm, Kupferrohre-Weichlötprogramm, Montageelemente, Schallschlucker, Schraubfittings, Stahlrohre-Hartlötprogramm, Stahlrohre-Schweißprogramm, Übergangskupplungen
+--- GC_Installation H
+    Kupplungen, Absperrklappen, AGS-System, Formstücke, Kugelhähne, Lubricant, Schmutzfänger, Rohre, Anbohrschellen, Dichtungen, Edelstahl-Formteile, Edelstahl-Kugelhähne, Edelstahl-Kupplungen, Edelstahl-Rohre, Edelstahl-System, Ersatzdichtungen, Formteile, Gleitmittel, Guss-Kupplungen, Handnutgeräte, Lochschneidegeräte, Rohr
+--- GC_Installation I
+    Abflusssysteme, Rohre, Abflussrohre, Belüfter, Formteile, Gleitmittel, Rohrbelüfter, Silent-PP, Silent-Pro, Abflusssystem, Abwasser-Formstücke, Abwasserrohr-Verbindungen, Adapter, Anschlussstücke, Brandschutzmanschetten, Eternit, Fallstrangbelüfter, Kanalrohre, Kanalrohrsystem, Multikupplungen, PP-Abflusssysteme, PP-Zubehör
+--- GC_Installation J
+    Abläufe, Duschrinnen, Designrinnen, Bodenabläufe, SAINT-GOBAIN, DallDrain, LORO-X, Advantix, Kellerabläufe, Klöber, PAM-GLOBAL, Dachentwässerungssysteme, Rückstauverschlüsse, Ersatzteile, Pluvia, ULTRA, PLUS, GLOBAL, Controlfix, Badabläufe, Balkonentwässerung, Dachabläufe
+--- GC_Installation K
+    Rohrschellen, Montagezubehör, Dübel, Montagesystem, Schilderhalter, Wandplatten, Schrauben, Befestigungen, Bezeichnungsschilder, BISMAT, IKS-2000, Lochbänder, Profilschienen, Rohrbefestigungen, Schiebemuttern, Stützbalken, Wandkonsolen, Leifeld, Allzweckdübel, Betonankerschrauben, Bodenkonsolen, Bolzenanker
+--- GC_Installation L
+    FLEX, Isoliermaterial, Schlauchisolierungen, Begleitheizung, Abwasser-Isoliermaterial, Dämmboxen, Isolierschläuche, Schlauchisolierung, Ventilisolierungen, Wickelstreifen, Alufonik, Armaturenisolierungen, Boxen, Dachrinnen, Dachrinnenheizung, Dämmhülsen, Dämmsystem, Freiflächen, Isolierboxen, Isolierungen, Isolierungsbänder, Kompakt-Dämmhülsen
+--- GC_Installation M
+    Wartungsprodukte, Dichtungsmittel, Druckbehälter, Inhibitoren, Selbstdichter, Sprühlanzen, Abflussrohrreiniger, Acrylreiniger, Aktiv-Neutralreiniger, Armaturenfette, Armaturenreiniger, Ausgießer, Auto-Cockpit-Intensivpflege, Auto-Felgenreiniger, Auto-Magic-Cleaner-Sprays, Auto-Polster-Schaumreiniger, Autoreinigungsboxen, Auto-Scheibenenteiser, Auto-Scheibenklar, Auto-Scheibenreiniger, Auto-Shampoos, Auto-Vorsprühreiniger
+--- GC_Installation N
+    Installationselemente, Montageelemente, Betätigungsplatten, WC-Elemente, Bidet-Elemente, Installationssysteme, TECEprofil, Urinal-Elemente, Waschtisch-Elemente, WC-Betätigungen, Abdeckplatten, Monolith, Rapid, Skate, TECEbox, Uniset, Urinal-Betätigungen, Urinal-Elektronik, Urinal-Steuerungen, ProfiBox, SANIT, Bade
+--- GC_Installation O
+    Ventile, MULTI-THERM, GEKA, Regulierarmaturen, Systemtrenner, Wasserzähler, Deltamess, Sensus, Wohnungswasserzähler, Freistrom-Absperrventile, Regulierventile, Spülstationen, Absperrarmaturen, Armaturen, BENDER, MULTI-FIX-PLUS, Oberteile, Probenahmeventile, Schläuche, Sicherheitsarmaturen, Sicherheitsgruppen, Sicherheitstrennstationen
+--- GC_Installation P
+    Brandschutzmanschetten, PYRO-FOX, Brandschutzrohrschalen, FLAM, FLEX, Pacifyre, Düker, Brandschutzabschottungen, Brandschutz-Dämm-Manschetten, Brandschutz-Kitt, Brandschutz-Mischrohre, Brandschutz-Mörtel, Brandschutzschilder, Brandschutzsysteme, Brandschutz-Wickelband, Curaflam, Kartuschenpistolen, Kombiboxen, Kombischott, PAM-GLOBAL, Rohrabschottungen
+--- GC_Installation Q
+    Futterrohre, Hauseinführungen, Dichtungseinsätze, Gliederkettendichtungen, Ringraumdichtungen, Rohrdurchführungen
+--- GC_Installation R
+    Kupplungen, Stecker, Aderleitungen, Automatengehäuse, Elektrotechnik, Fernmeldeleitungen, Gummischlauchleitungen, Kunststoff-Wellrohre, PVC-Isolierbänder, SCHUKO-Verlängerungen, Steuerleitungen, Wandsteckdosen, YSLY
+--- GC_Klima A
+    Wandklimageräte, Raumklimageräte, Klimageräte, Multisplit-Raumklimageräte, CL5000M, CL7000M, Free, Inbetriebnahme, Multi, Multi-Klimasysteme, Multisplit-Wandgeräte, Split-Klimasysteme, Designhauben, Inverter-Klimageräte, Monosplit-Raumklimageräte, Monosplit-Wandklimageräte, Multisplit-1-Wege-Kassetten, Multisplit-Kanaleinbaugeräte, Multisplit-Klima-Außengeräte, Multisplit-Mini-Kassetten, Multisplit-Standtruhen, Multisplit-Systeme
+--- GC_Klima B
+    Kaltwasser-Deckenkassetten, Kaltwassererzeuger, Kaltwassersysteme, Kaltwasser-Truhengeräte, Kaltwasser-Wandgeräte, Truhengeräte, Wand, Deckentruhen, Gebläsekonvektoren, KaClima, KaDeck, Kältespeicher, Kaltwasser-Deckentruhen, Kaltwasser-Design-Wandgeräte, Kaltwassersätze, Kaltwasserspeicher, Kaltwasser-Wand, KWD-4, Lufterhitzer, Speicherbehälter, Ultra, Wasserspeicher
+--- GC_Klima C
+    Entfeuchtung, Luftentfeuchter, Bautrockner
+--- GC_Klima D
+    Entfeuchter, Schwimmbadentfeuchter
+--- GC_Klima E
+    Entfeuchter, Industrieentfeuchtung, Luftentfeuchter
+--- GC_Klima F
+    Kondensatpumpen, FLEX, Isolierungen, Kältemittel, Kupferrohre, Schlauchisolierungen, Aufstellsysteme, Befestigungsmaterial, Befestigungstechnik, BISOFIX, Dimensionen, Isolierplatten, Kältekupferrohre, Kältemittelwaagen, Kälterohrschellen, Kälteschellen, Ölabscheider, Ölprotektoren, Schläuche, Schraderventilkernentferner, Vakuumpumpen, Werkzeuge
+--- GC_Klima G
+    Raumtemperatur, Schalltechnische, Umrechnungstabellen, Dimensionen, Kupferrohre
+--- GC_Lueftung_1 A
+    Lüftungsgeräte, Verso, Basic, Domekt-CF, Domekt-R, Domekt-S, ECO-DUO, Nexxt, Rohrsystem, ValloMulti, ValloPlus, Zentrale, Abluftventilatoren, Außenwandlüftungsventile, Designgitter, Dezentrale, Einrohrlüftungssystem, Erdwärmetauscher, Flat, HUMO, Kompaktlüftungsgeräte, Luftbefeuchter
+--- GC_Lueftung_1 B
+    Lüftungsgeräte, Kompakt-Lüftungsgeräte, Kompaktlüftungsgeräte, Schul-Lüftungsgeräte, SupraBox, X-CUBE
+--- GC_Lueftung_1 C
+    Lufterhitzer, Türluftschleier, Deckenventilatoren, Warmlufterzeuger, Torluftschleier, Warmluft-Heizluftsysteme, Wolf, Dunkelstrahler, ELYPSE, Factory, Hellstrahler, Industrie-Deckenventilatoren, Kassetten-UniLine, MAXWELL, OPTIMA, Öl-Heizzentralen, Tandem, Ultra, UniLine, Verdunstungskühler, Warmwasser-Heizautomaten, WINDBOX
+--- GC_Lueftung_1 D
+    Einrohrlüftungssystem, Abluftelemente, Abluftgeräte, Abluftsysteme, Abluftventile, Außenluftdurchlässe, Außenwand-Durchlässe, Fassadenelemente, LUNOtherm, Ventilatoreinsätze, Zentralentlüftungsboxen, Außenwandlüftungsventile
+--- GC_Lueftung_1 E
+    Ventilatoren, Kleinraumventilatoren, Dachventilatoren, Rohrventilatoren, Axialventilatoren, Einschubventilatoren, Entrauchungs-Ventilatoren, Kanalventilatoren, Radialventilatoren, Rohreinschubventilatoren, Ventilatorboxen, Außenwand-Ventilatoren, Axial-Mitteldruckventilatoren, Axial-Rohrventilatoren, Brandgas-Dachventilatoren, Brandgas-Ventilatoren, Drehzahlsteller, ExaBoxx, Fenster, Fensterventilatoren, Flach-Radialrohrventilatoren, GigaBox
+--- GC_Lueftung_1 F
+    Abgasabführung, Abluftboxen, Boxventilatoren, Dachventilatoren, Drehzahlregler, Druckschalter, Drucksensoren, Flammschutzfilter, Küchenabluftboxen, MegaBox, Radialventilatoren, Regelgeräte, Revisionsdeckel, Schalt, Streckmetallfilter, Überwachungssystem, Wickelfalzrohre
+--- GC_Lueftung_1 G
+    Dachhauben, Wickelfalzformteile, Wickelfalzrohre, Dachdurchführungen, Lüftungsrohre, Aluminium, Drahtverstärkte, Erdwärmetauscher, Flachschalldämpfer, Formteile, Lüftungsschläuche, Ovalrohr-Schalldämpfer, Schalldämpfer, Stahl, Verteiler-Schalldämpfer, Wickelfalz-Dachaufsätze
+--- GC_Lueftung_1 H
+    Schalldämpfer, Rohrschalldämpfer, Antivibrationsmatten, Gummiprofilleisten, Kulissen-Schalldämpfer, Schalldämmkulissen, Schalldämpferkulissen, Schwingungsdämpfer, Schwingungstechnik, Telefonieschalldämpfer
+--- GC_Lueftung_1 I
+    Lüftungsgitter, Anschlusskästen, Deckendralldurchlässe, Wetterschutzgitter, Deckenluftdurchlässe, Jalousieklappen, Lüftungsventile, Universal-Anschlusskästen, Verschlussklappen, Frontauslässe, Kompaktgitter, Kugelwetterschutzgitter, Lüftungs-Tellerventile, Tellerventile, Türlüftungsgitter, Türsichtschutzgitter, Überdruckgitter, Überdruckjalousien
+--- GC_Lueftung_1 J
+    Volumenstromregler, Brandschutzklappen, Absperrklappen, Absperrvorrichtungen, Brandschutz-Abluftventile, Brandschutzventile, Drosselklappen, Iris-Blenden, Kaltrauchsperren, Konstant-Volumenstromregler, Rauchauslöseeinrichtungen, Volumenstrombegrenzer, Volumenstrom-Drosselklappen
+--- GC_Lueftung_1 K
+    Taschenfilter, Ersatzfilter, Kompaktfilter, Luftfilterboxen, Luftfiltermatten, Neue, Rollbandfilter
+--- GC_Lueftung_1 L
+    Befestigungsmaterial, Befestigungstechnik, Klebebänder, Rohrschellen, Abdichttechnik, Ablaufstutzen, Aktiv-Neutralreiniger, Alu-Kaltschrumpfbänder, Alu-Klebebänder, Armaturenfette, Auto-Magic-Cleaner-Sprays, Bandschellen, Bauelemente, Bau-Luft-Silikone, Befestigungssysteme, Beschilderungen, Bindedrähte, Blechdübel, Blindnieten, Desinfektionsreiniger, Dichtungsmassen, Edelstahlreiniger
+--- GC_Lueftung_1 M
+    Regelgeräte, Schalt, Drehzahlsteller, Comfort-Pakete, Differenzdruckmanometer, Differenzdruckschalter, Differenzdruck-Wächter, Frequenzumrichter, HUBA-CONTROL, Hygrostate, Lüftungsmessgeräte, Messflüssigkeiten, Nachlaufrelais, Rauchentwickler, Rauchmeldetechnik, Rauchpatronen, Schrägrohrmanometer, Steckmotoren, Stellantriebe, Thermometer, U-Rohr-Manometer, Verschlussstopfen
+--- GC_Sanitaer_1 A
+    Keramik, Dusch-WC-Anlagen, Urinale, Urinaltrennwände, AquaClean, Aufsatzschalen, Dusch-WC-Aufsätze, Dusch-WC-Komplettanlagen, Subway, Vero, Wand-WC-Becken, Axent, Duka, Ablagen, Acanto, Aluminium-Aufsatzbecken, Architectura, Artis, Aufsatzbecken, Avento, Bastille, Befestigungen
+--- GC_Sanitaer_1 B
+    Armaturen, Thermostate, Zweigriffarmaturen, Ixmo, Kartuschen, Pure, Empora, Eurostyle, Hansabasic, Hansanova, Hansavantis, Kaltwasserventile, Rettangolo, Standventile, Acquaviva, Allure, Anello, Armaturen-Zubehör, Bauedge, Bevo, Carlos, CeraTherm
+--- GC_Sanitaer_1 C
+    Niederdruckarmaturen, Spültischarmaturen, Concetto, Eurodisc, Eurostyle, Hansadesigno, Hansamix, Hansapolo, Hansaronda, Hansatwist, Live, Objekta, Pure, Antica, Armaturen, Armaturen-Zubehör, Badmöbel, Blue, Flag, Hansabasic, Hansapinto, L-INE
+--- GC_Sanitaer_1 D
+    Brausen, Duschsysteme, Brauseschläuche, Gelenkstücke, Kneippgarnituren, Kneippschläuche, Schwallbrausen, Thermostat-Duschsysteme
+--- GC_Sanitaer_1 E
+    Ersatzteile, Kartuschen, Eckventile, Kombinations-Eckventile, Strahlregler, Anschlussschläuche, Armaturenfette, Ausläufe, Auslaufventile, Blindstopfen, Doppelspindel-Eckventile, Durchflussmengenregler, Eckventil-Einzelteile, Eckventil-Zubehör, Gabelstücke, Geräte-Anschlussventile, Geräte-Spültischventile, Geräte-UP-Ventile, Geräteventile, Hahnrosetten, Innenoberteile, Kupfer-Anschlussrohre
+--- GC_Sanitaer_1 F
+    Ablaufarmaturen, Wannengarnituren, Geruchsverschlüsse, Röhrengeruchsverschlüsse, Schaftventile, Standrohrventile, Abflusszwischenstücke, Ablaufgarnituren, Ablaufrohre, Bidet-Röhrengeruchsverschlüsse, Duschwannen-Siebventile, Hahnlochstopfen, Kettenhalter, Standrohre, Tassengeruchsverschlüsse, Universal-Spülenstopfen, Universalventile, Ventilstopfen, Wandeinbau-Fertigabläufe, Wannen-Geruchsverschlüsse, Waschtisch-Geruchsverschlüsse
+--- GC_Sanitaer_1 G
+    Badausstattung, LED-Lichtspiegel, Lichtspiegel, Vogelsang, Giese, Asis, Avani, Claire, Container, Elegance, ELEMENTS, Emporio, Gealuna, Kippspiegelgarnituren, Kosmetikspiegel, LED-Kosmetikspiegel, Liaison, Loft, Moll, Rettangolo, Schwammkörbe, Seifenkörbe
+--- GC_Sanitaer_1 H
+    Duschwannen, Badewannen, Ablaufgarnituren, Dichtmaterial, Dichtsets, Einbau-System-Rahmen, Fußgestelle, Mitten-Abstütz-Systeme, Montagefüße, System-Installationsbox, Wannenzubehör
+--- GC_Sanitaer_1 I
+    Badewannen, Duschwannen, Duschwannen-Zubehör, ELEMENTS, Ronal, Sunshower, Whirl, Blumenwannen, Brausewannenfüße, Facette, Infrarotstrahler, Monoblockwannen, Outdoorpools, Whirlsysteme
+--- GC_Sanitaer_1 J
+    Duschrinnen, Designrinnen, S-line, Vinyl, Abdichtungssystem, Cera, CeraLine, Connect-Aktiventwässerung, Designsets, Duschboards, Rohbausets
+--- GC_Sanitaer_1 K
+    Wannenträger, Wannenzubehör, Badewannenfüße, Wannenfüße, Badabdichtungen, Brausewannenfüße, Duschsysteme, Duschwannenfüße, GriP, 2K-Montage-Schnellschäume
+--- GC_Sanitaer_1 L
+    Duschabtrennungen, Abtropfdichtungen, Badewannenabtrennungen, Duschkabinen, Ibiza, Komplettduschen, Komplettduschkabinen, Nova, Rothalux, Vario, Vinata
+--- GC_Sanitaer_1 M
+    Badmöbel, LED-Spiegelschränke, Spiegelschränke, Empora, Paseo, Tolbiac, Trend
+--- GC_Sanitaer_1 N
+    WC-Sitze, Spülkästen, WC-Druckspüler, Urinal-Druckspüler, Jomo, Spülrohrverbinder, Absaugesiphons, Druckspüler, Druckspülrohre, Elektronikarmaturen, Spülrohre, Unitasmanschetten, Urinal-Ablaufmanschetten, Urinal-Absaugesiphons, Urinal-Elektronikarmaturen, Urinal-Schmutzfängereinsätze, Urinal-Spülrohrverbinder, Urinal-Zubehör, WC-Abgangsverbinder, WC-Anschlusszubehör, WC-Dichtungsmanschetten, WC-Spülrohrverbinder
+--- GC_Sanitaer_1 O
+    Installationselemente, Montageelemente, Betätigungsplatten, WC-Elemente, Bidet-Elemente, Installationssysteme, TECEprofil, Urinal-Elemente, Waschtisch-Elemente, WC-Betätigungen, Abdeckplatten, Monolith, ProfiBox, Rapid, SANIT, Skate, TECEbox, Uniset, Urinal-Betätigungen, Bade, Duofix, Dusch-Elemente
+--- GC_Sanitaer_1 P
+    Durchlauferhitzer, TECGET, Warmwasserspeicher, Flächenheizungen, Heizmatten, Standspeicher, Basisgeräte, Dünnbett-Heizmatten, Kochendwassergeräte, Raumheizer, Warmwasserbereiter, Warmwasser-Kleinspeicher, Warmwasser-Wandspeicher
+--- GC_Sanitaer_1 Q
+    Ausgussbecken, Auflagespülen, Einbauspülen, Fußbadewannen, Schulbecken, Spülen, Spülsteine, Spültischunterbauten, Unterbauten, Waschbecken
+--- GC_Sanitaer_1 R
+    Stand-WC-Becken, WC-Sitze, Handwaschbecken, Hock-WC, Kids, Kinder-WC-Becken, Krankenhaus-WC-Becken, RoCasca, Säuglingswannen, Sitzerhöhungen, Wand-WC-Becken, Waschtischarmaturen, Waschtische, WC-Becken, WC-Sitzerhöhungen, Wickeltische
+--- GC_Sanitaer_1 S
+    Sicherheitsausstattung, Griffe, Badausstattung, Duschklappsitze, BarbieTM, Ascento, CareSystem, Duschvorhänge, Modulare, Montagesets, Waschtisch-Lifter, WC-Lifter
+--- GC_Sanitaer_1 T
+    Spender, Waschraumausstattung, Edelstahl-Produkte, SanTRAL, Stratos-Line, Dyson, Gipsfangbecken, Händetrockner, Reinigung, Tischseifenspender, Warmlufttrockner, Waschrinnen, WC-Kabinen
+--- GC_Sanitaer_1 U
+    Selbstschlussarmaturen, Duscharmaturen, Armaturen, Brauseköpfe, Hansaclinica, MODUS, PETIT, PURIS, Selbstschlussarmaturen-Zubehör, Sicherheitsmischbatterien, Spezialarmaturen, VITUS, Vorwand-Duschpaneele
+--- GC_Sanitaer_1 V
+    Elektronikarmaturen, Waschtisch-Elektronikarmaturen, Style, Armaturen, B-Safety, CELIS, CLASSIC, Europlus, GRANDIS, Hansadesigno, Hansamedipro, KWCgastro, MODUS, Notduscheinrichtungen, PURIS, Spültisch-Elektronikarmaturen, Urinal-Elektronikarmaturen, Großküchen-Armaturen, WC-Elektronikarmaturen
+--- GC_Sanitaer_1 W
+    Abflussrohrreiniger, Acrylreiniger, Aktiv-Neutralreiniger, Armaturenreiniger, Auto-Vorsprühreiniger, Bau-Luft-Silikone, Baureiniger, Bildschirmreiniger, Blitzzement, Desinfektionsreiniger, Dichtmassen, Duschcleaner, Duschrinnenreiniger, Entkalkungspumpen, Entkalkungssysteme, Erste, Fette, Frischedüfte, Fugen-Quartett, Fugen-Reiniger, Fugen-Reparatursets, Glasreiniger
+--- GC_Wasserwelt A
+    Hauswasserwerke, Regenwassernutzungsanlagen, Wasserversorgung, Gartenpumpen, Zisternenpumpen, Druckerhöhungsanlagen, Regenwassernutzung, Unterwassermotorpumpen, Druckkessel, Bewässerungsanlagen, Brunnenfilter, Handpumpen, Profi, Pumpenarmaturen, Regenwasserauffangbehälter, Saugpumpen, Spielplatzpumpen, Systemtrennstationen, WILO-Rain, Tauchpumpen
+--- GC_Wasserwelt B
+    Hebeanlagen, Tauchpumpen, Schmutzwasserpumpen, Kondensatpumpen, Druckentwässerung, Wasserentsorgung, Baustellen, Fäkalienförderer, Genix, KESSEL, Hochwassersets
+--- GC_Wasserwelt C
+    Trinkwasseraufbereitung, Kalkschutz, Dosieranlagen, Enthärtungsanlagen, Filtertechnik, Leckageschutz, Chemiefreie, Braukmann, Untertisch-Mikrofilter, Untertisch-Umkehr-Osmose, Wasserbehandlung
+--- GC_Wasserwelt D
+    Heizungswasseraufbereitung, Schnellentkalkung
+--- GC_Wasserwelt E
+    Schwimmbadtechnik, Wasserpflege, Schwimmbadfilter, Schwimmbadumwälzpumpen, Schwimmbadzubehör, Wasserdesinfektion, Wärmetauscher, Absorber, Einbauteile, Filteranlagen, Regelanlagen, HelioPool, Poolabdeckungen, Poolleitern, Poolroboter, Pools, Salzelektrolyse, Schwimmbadabsorber, Sonstiges, Speck, Stahlmantelbecken, Verrohrungsmaterial
+--- GC_Wasserwelt F
+    Feuerlöschtechnik, Löschwasserarmaturen, Handfeuerlöscher, Löschwasserübergabestellen, Wandhydranten

@@ -1,0 +1,17 @@
+GC_Elektro_1                   4135 Index-Eintraege
+GC_Elektro_2                   1181 Index-Eintraege
+GC_Elektro_Gebaeude             322 Index-Eintraege
+GC_Ersatzteile_1                814 Index-Eintraege
+GC_Ersatzteile_2                122 Index-Eintraege
+GC_Ersatzteile_3                176 Index-Eintraege
+GC_HOEG                         639 Index-Eintraege
+GC_Heizung                     4239 Index-Eintraege
+GC_Installation                6238 Index-Eintraege
+GC_Klima                        867 Index-Eintraege
+GC_Kuechenarmaturen             219 Index-Eintraege
+GC_Lueftung_1                  1918 Index-Eintraege
+GC_Lueftung_2                   418 Index-Eintraege
+GC_Sanitaer_1                  5053 Index-Eintraege
+GC_Sanitaer_2                  1505 Index-Eintraege
+GC_Wasserwelt                   760 Index-Eintraege
+GESAMT 28606

@@ -231,8 +231,10 @@ pruefe('bereits erwartete Merkmale lösen keinen Vorschlag aus', () => {
   assert.deepEqual(vor, [], 'schlägt Bekanntes erneut vor');
 });
 pruefe('völlig neues Merkmal wird erkannt', () => {
-  const vor = wissen.pruefeAnhebung('kugelhahn', { oberflaeche: 'vernickelt' });
-  assert.equal(vor[0].feld, 'oberflaeche');
+  // medium (Wasser/Luft/Gas/Öl) steht in keinem Schema — wenn der Bot es sieht,
+  // schlägt er es als neues Attribut für kugelhahn vor.
+  const vor = wissen.pruefeAnhebung('kugelhahn', { medium: 'wasser' });
+  assert.equal(vor[0].feld, 'medium');
   assert.equal(vor[0].von, 'unbekannt');
 });
 pruefe('bestätigte Anhebung wirkt sofort', () => {
