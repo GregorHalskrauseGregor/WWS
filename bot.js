@@ -987,7 +987,7 @@ bot.onText(/\/delete[-_]my[-_]data/, async (msg) => {
   }
 });
 
-bot.onText(/\/wer-bin-ich/, (msg) => {
+bot.onText(/\/wer_bin_ich/, (msg) => {
   const profil = benutzer.ladeProfil(msg.chat.id);
   if (!profil) {
     bot.sendMessage(msg.chat.id, 'Kein Profil gefunden. Schreib erst eine Nachricht, dann lege ich eins an.');
@@ -1049,6 +1049,53 @@ bot.onText(/\/reset_aufnahme/, (msg) => {
   } else {
     bot.sendMessage(msg.chat.id, 'Materialaufmaß-Experte nicht verfügbar.');
   }
+});
+
+// /options — schickt die Befehls-Übersicht aus data/options.json als formatierte Liste.
+bot.onText(/\/options/, (msg) => {
+  const optionsPfad = path.join(__dirname, 'data', 'options.json');
+  if (!fs.existsSync(optionsPfad)) {
+    bot.sendMessage(msg.chat.id, '❌ options.json nicht gefunden.');
+    return;
+  }
+  let opts;
+  try {
+    opts = JSON.parse(fs.readFileSync(optionsPfad, 'utf-8'));
+  } catch (e) {
+    bot.sendMessage(msg.chat.id, '❌ options.json ist kaputt: ' + e.message);
+    return;
+  }
+
+  const lines = [];
+  lines.push('*' + (opts.name || 'DILA') + '*');
+  if (opts.kurzbeschreibung) lines.push('_' + opts.kurzbeschreibung + '_');
+  lines.push('');
+
+  if (Array.isArray(opts.funktionen) && opts.funktionen.length > 0) {
+    lines.push('*Kann:*');
+    for (const f of opts.funktionen) lines.push('  • ' + f);
+    lines.push('');
+  }
+
+  if (Array.isArray(opts.kategorien)) {
+    for (const kat of opts.kategorien) {
+      lines.push('*' + kat.name + '*');
+      if (Array.isArray(kat.befehle)) {
+        for (const b of kat.befehle) {
+          // Backticks für Code, damit der User den Befehl leicht kopieren kann
+          lines.push('  `' + b.cmd + '` — ' + b.desc);
+        }
+      }
+      lines.push('');
+    }
+  }
+
+  if (Array.isArray(opts.hinweise) && opts.hinweise.length > 0) {
+    lines.push('*Hinweise:*');
+    for (const h of opts.hinweise) lines.push('  ' + h);
+  }
+
+  bot.sendMessage(msg.chat.id, lines.join('\n'), { parse_mode: 'Markdown' });
 });
 
 // /pdf erzeugt das PDF aus der aktuellen Materialaufmaß-Session.

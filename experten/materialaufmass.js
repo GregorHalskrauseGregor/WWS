@@ -412,25 +412,41 @@ WICHTIG: Antworte NUR mit einem JSON-Objekt. Kein Kommentar davor oder danach. F
     // wie "passt, jetzt als pdf" die Session leeren und das PDF nie generiert.
     const neuePositionen = Array.isArray(extrahiert.positionen) ? extrahiert.positionen : [];
     const neuesProjekt = extrahiert.projekt || {};
-    const hatNeueDaten = neuePositionen.length > 0
-      || neuesProjekt.nummer
-      || neuesProjekt.bezeichnung;
+    const hatNeuePositionen = neuePositionen.length > 0;
+    const hatNeueProjektDaten = neuesProjekt.nummer || neuesProjekt.bezeichnung;
+    const hatNeueDaten = hatNeuePositionen || hatNeueProjektDaten;
 
+    // MERGE-Logik: Bestehende Session nur in den Feldern überschreiben,
+    // die die KI auch tatsächlich extrahiert hat. Alles andere bleibt.
+    // Verhindert Datenverlust bei Teil-Extraktion (z.B. nur Projektnummer
+    // geschickt → nur projekt.nummer aktualisieren, positionen behalten).
+    let merged;
     if (hatNeueDaten) {
-      // Session aktualisieren
-      speichereSession(chatId, {
+      const altesProjekt = (existingSession && existingSession.projekt) || {};
+      const altePositionen = (existingSession && Array.isArray(existingSession.positionen))
+        ? existingSession.positionen
+        : [];
+      merged = {
         zuletztGeaendert: new Date().toISOString(),
-        projekt: neuesProjekt,
-        positionen: neuePositionen
-      });
+        projekt: {
+          nummer: hatNeueProjektDaten && neuesProjekt.nummer
+            ? neuesProjekt.nummer
+            : (neuesProjekt.nummer || altesProjekt.nummer || null),
+          bezeichnung: hatNeueProjektDaten && neuesProjekt.bezeichnung
+            ? neuesProjekt.bezeichnung
+            : (neuesProjekt.bezeichnung || altesProjekt.bezeichnung || null)
+        },
+        // Positionen: bei neuen → überschreiben, sonst behalten
+        positionen: hatNeuePositionen ? neuePositionen : altePositionen
+      };
+      speichereSession(chatId, merged);
+    } else {
+      // Keine neuen Daten → Session unverändert
+      merged = existingSession || extrahiert || { projekt: {}, positionen: [] };
     }
-    // Wenn keine neuen Daten: existierende Session behalten (wenn vorhanden)
 
-    // Aktuelle Daten für die folgenden Checks verwenden — entweder die alten
-    // aus existingSession oder die gerade aktualisierten.
-    const aktuelleDaten = hatNeueDaten
-      ? extrahiert
-      : (existingSession || extrahiert);
+    // Aktuelle Daten für die folgenden Checks verwenden — die gemergten Daten.
+    const aktuelleDaten = merged;
 
     // Prüfen, ob was fehlt — gegen die aktuellen (ggf. erhaltenen) Daten
     if (fehltEtwas(aktuelleDaten)) {
