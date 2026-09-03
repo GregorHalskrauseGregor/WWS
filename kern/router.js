@@ -117,6 +117,18 @@ AKTIONSWAHL:
 ${dateiRegeln}
 - Im Zweifel "konversation" mit niedriger confidence.
 
+BEISPIELE (so wird entschieden):
+"gib mir den aktuellen Lagerbestand"      -> verarbeiten, lagerliste     (Bestand als Liste/Datei)
+"wie viele Stahlbögen DN50 haben wir?"    -> verarbeiten, lagerauskunft  (eine gezielte Frage)
+"füge 5 Stahlbögen DN50 dem Lager hinzu"  -> verarbeiten, lager          (Buchung)
+"reservier mir 4 Magna3 Pumpen"           -> verarbeiten, lager          (Buchung)
+"bestell 20m Kupferrohr bei der GC"       -> verarbeiten, bestellung
+"ich brauche eine Anleitung für die X"    -> verarbeiten, recherche
+"Aufmaß 26-0111, 12m Kupferrohr verlegt"  -> verarbeiten, materialaufmass
+"danke, passt so"                         -> konversation
+Merke: Fragen und Wünsche rund um Bestand, Material oder Baustelle gehören fast
+immer zu einem Experten. "konversation" ist für Smalltalk und Rückmeldungen.
+
 FORMAT (genau so, eine Zeile):
 {"thema":"<themaId oder neu>","themaName":"<nur bei neu, 2-5 Wörter>","aktion":"<aktion>","experte":"<id oder null>","dok_typ":null,"hinweis":null,"confidence":0.0}`;
 }

@@ -11,6 +11,8 @@ const faelle = [
   ['reservieren',      'reservier mir bitte 4 Magna3 Pumpen für nächste Woche', 'lager'],
   ['nur fragen',       'wie viele Stahlbögen DN50 haben wir noch?',          'lagerauskunft'],
   ['Liste als Datei',  'schick mir bitte die Lagerliste als Excel',          'lagerliste'],
+  ['Bestand allgemein','gebe mir den aktuellen lagerbestand',                ['lagerliste', 'lagerauskunft']],
+  ['Datei einlagern',  'Füge bitte ins lager ein',                           'lager'],
   ['Aufmaß (Falle!)',  'Aufmaß 26-0111 Müller, 12m Kupferrohr verlegt',      'materialaufmass'],
   ['Bestellung',       'bestell 20m Kupferrohr bei der GC',                  'bestellung'],
 ];
@@ -20,9 +22,10 @@ const faelle = [
   for (const [name, text, erwartet] of faelle) {
     const r = await router.entscheide({ text, chatId: 342450413, chat: jsonText });
     const ist = r.aktion === 'verarbeiten' ? r.experte : r.aktion;
-    const gut = ist === erwartet;
+    const erlaubt = Array.isArray(erwartet) ? erwartet : [erwartet];
+    const gut = erlaubt.includes(ist);
     if (gut) treffer++;
-    console.log(`${gut ? '✅' : '❌'} ${name.padEnd(18)} -> ${String(ist).padEnd(16)} (erwartet ${erwartet})`);
+    console.log(`${gut ? '✅' : '❌'} ${name.padEnd(18)} -> ${String(ist).padEnd(16)} (erwartet ${erlaubt.join(' oder ')})`);
   }
   console.log(`\n${treffer}/${faelle.length} richtig zugeordnet`);
 })().catch(e => console.error('FEHLER:', e.message));

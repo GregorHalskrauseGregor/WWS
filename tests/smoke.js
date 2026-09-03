@@ -420,6 +420,76 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
     console.log('  ⚠️  übersprungen (keine Vorlagen-PDF vorhanden)');
   }
 
+  console.log('\n── Massen-Import aus Dateien ──');
+  // Echter Vorfall: eine Excel-Lagerliste wurde korrekt an den Lager-Experten
+  // geroutet, aber es kam "Positionen: (noch keine)" zurueck. 150 Zeilen in
+  // EINER Antwort sprengen das Token-Budget des Modells — es liefert dann nichts.
+  const lagerExperte = experten.findeExperteMitId('lager');
+  pruefe('Text wird an Zeilengrenzen gestueckelt', () => {
+    const zeilen = Array.from({ length: 400 }, (_, i) => `Artikel ${i} | 5 | Stk.`).join('\n');
+    const stuecke = motor.stueckle(zeilen);
+    assert(stuecke.length > 1, 'nicht gestueckelt');
+    for (const st of stuecke) {
+      assert(st.length <= 2400, 'Stueck zu gross: ' + st.length);
+      assert(!st.startsWith('|'), 'mitten in einer Zeile getrennt');
+    }
+    assert(stuecke.join('\n').split('\n').length === 400, 'Zeilen verloren gegangen');
+  });
+  pruefe('Listenfeld des Schemas wird gefunden', () => {
+    assert.equal(motor.listenFeldVon(lagerExperte.schema), 'positionen');
+  });
+  await pruefeAsync('Eintraege aus mehreren Auszuegen werden gesammelt', async () => {
+    let rufe = 0;
+    const dienste = {
+      chat: async () => {
+        rufe++;
+        return JSON.stringify({ ops: [
+          { op: 'liste_hinzu', feld: 'positionen', wert: { menge: rufe, einheit: 'Stk.', bezeichnung: 'Artikel ' + rufe } }
+        ] });
+      },
+      protokoll: () => {}
+    };
+    const inhalt = Array.from({ length: 300 }, (_, i) => `Zeile ${i} mit etwas Text zur Fuellung`).join('\n');
+    const r = await motor.extrahiereAusDokument(lagerExperte, inhalt, dienste);
+    assert(r.stuecke > 1, 'nur ein Auszug');
+    assert.equal(rufe, r.stuecke, 'nicht jeder Auszug ausgewertet');
+    assert.equal(r.ops.length, r.stuecke, 'Operationen gingen verloren');
+    assert(r.ops.every((o) => o.op === 'liste_hinzu' && o.feld === 'positionen'));
+  });
+  const importInhalt = Array.from({ length: 300 }, (_, i) => `Zeile ${i} mit etwas Text zur Fuellung`).join('\n');
+  const einEintrag = JSON.stringify({ ops: [{ op: 'liste_hinzu', feld: 'positionen', wert: { menge: 1, bezeichnung: 'X' } }] });
+
+  await pruefeAsync('einmaliger Aussetzer wird durch den zweiten Versuch gerettet', async () => {
+    let ersterRuf = true;
+    const dienste = {
+      chat: async () => {
+        if (ersterRuf) { ersterRuf = false; return ''; } // leere Antwort wie bei Reasoning-Modellen
+        return einEintrag;
+      },
+      protokoll: () => {}
+    };
+    const r = await motor.extrahiereAusDokument(lagerExperte, importInhalt, dienste);
+    assert.equal(r.fehler, 0, 'Aussetzer nicht aufgefangen');
+    assert.equal(r.ops.length, r.stuecke, 'Auszug ging trotz Wiederholung verloren');
+  });
+
+  await pruefeAsync('dauerhaft kaputter Auszug wird gemeldet, blockiert aber nicht', async () => {
+    const dienste = {
+      chat: async (prompt) => (/Auszug 2 von/.test(prompt) ? 'ich bin leider kein JSON' : einEintrag),
+      protokoll: () => {}
+    };
+    const r = await motor.extrahiereAusDokument(lagerExperte, importInhalt, dienste);
+    assert.equal(r.fehler, 1, 'Fehler nicht gezaehlt — Luecke bliebe unsichtbar');
+    assert.equal(r.ops.length, r.stuecke - 1, 'andere Auszuege gingen mit verloren');
+  });
+  pruefe('lange Liste wird in der Bestaetigung gekappt', () => {
+    const positionen = Array.from({ length: 150 }, (_, i) => ({ menge: 1, einheit: 'Stk.', bezeichnung: 'Artikel ' + i }));
+    const stand = motor.baueStand({ richtung: 'einlagern', positionen }, lagerExperte.schema);
+    assert(stand.includes('(150)'), 'Gesamtzahl fehlt');
+    assert(stand.includes('und 138 weitere'), 'nicht gekappt: ' + stand.slice(0, 200));
+    assert(stand.split('\n').length < 20, 'Bestaetigung viel zu lang');
+  });
+
   console.log('\n── Regression: MiniMax-Fehler in HTTP-200-Antwort ──');
   // MiniMax meldet Fehler im Rumpf, nicht im Status. Vorher kam dabei still
   // ein leerer String zurueck, den der Aufrufer fuer eine Antwort hielt.

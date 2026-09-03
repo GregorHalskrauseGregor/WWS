@@ -325,9 +325,33 @@ Semikolon getrennt).
 - Die **eigene** Vormerkung wird bei der Entnahme aufgezehrt.
 - `/reservierungen` zeigt, was du selbst vorgemerkt hast.
 
+### Einlagern aus Dateien
+
+Eine Lagerliste, ein Lieferschein oder eine Bestandstabelle kann direkt die
+Grundlage sein: Datei schicken, dazu schreiben was passieren soll
+(„füge bitte ins Lager ein"), fertig.
+
+Dateien werden dabei **stückweise** gelesen. Der Grund ist handfest: aus 150
+Tabellenzeilen müsste das Modell 150 Operationen in einer einzigen Antwort
+schreiben — das sprengt jedes Antwort-Budget, und Reasoning-Modelle liefern dann
+gar nichts statt etwas Unvollständiges. Der Motor zerlegt den Inhalt deshalb an
+Zeilengrenzen in Häppchen von ~1200 Zeichen und wertet jedes einzeln aus.
+
+- Jedes Häppchen bekommt **einen zweiten Versuch**, falls die erste Antwort leer bleibt.
+- Scheitert ein Häppchen dauerhaft, wird das in der Bestätigung **deutlich
+  gemeldet** („2 von 9 Auszügen konnte ich nicht lesen"). Ein Lagerbestand, dem
+  still ein Fünftel fehlt, ist schlimmer als ein sichtbarer Fehlschlag.
+- Die Bestätigung zeigt die ersten 12 Positionen und die Gesamtzahl, nicht alle.
+- Kommt aus der Datei gar nichts Verwertbares, sagt der Bot das — statt so zu
+  tun, als hättest du nichts angegeben.
+
+Formate: Excel (`.xlsx`), Word, PDF (Formularfelder zuerst, dann Text, zuletzt
+OCR), Fotos per OCR, und Text- oder CSV-Dateien direkt.
+
 ### Beispiele
 
 ```
+[Excel-Datei] + "füge bitte ins Lager ein"       → 📦 Massen-Import
 "füge 5 Stahl Bögen DN50 dem Lager hinzu"        → 📦 einlagern
 "ich hab 3 Kugelhähne DN20 rausgeholt"           → 📦 entnehmen
 "reservier mir 4 Magna3 für nächste Woche"       → 📦 reservieren

@@ -26,6 +26,19 @@ const speicher = require('./vorgang');
 
 const ABBRUCH_MUSTER = /^\s*(stop|stopp|abbrechen|abbruch|reset|vergiss\s*es|verwerfen)\b/i;
 
+// Massen-Import aus Dateien: eine Lagerliste mit 150 Zeilen sprengt jedes
+// Antwort-Budget, wenn das Modell daraus 150 Operationen in EINEM Zug schreiben
+// soll — es liefert dann gar nichts. Deshalb wird ein laengerer Dateiinhalt in
+// Haeppchen zerlegt und je Haeppchen extrahiert.
+// Kleinere Haeppchen als man denkt: aus 2200 Zeichen werden ~30 Positionen,
+// und die passen samt Reasoning nicht zuverlaessig ins Antwort-Budget — in der
+// Praxis fiel dann jeder fuenfte Auszug komplett aus. 1200 Zeichen sind sicher.
+const DOK_STUECK_ZEICHEN = 1200;
+const DOK_MAX_STUECKE = 40;
+const DOK_TOKENS = 3000;
+const MAX_LISTENEINTRAEGE = 500;
+const STAND_MAX_EINTRAEGE = 12;
+
 // ───────────────────────────────────────────────────────── Schema-Auswertung
 
 function istListe(def) { return def && def.typ === 'liste'; }
@@ -84,12 +97,18 @@ function baueStand(daten, schema) {
         zeilen.push(`• ${label(feld, def)}: (noch keine)`);
       } else {
         zeilen.push(`• ${label(feld, def)} (${liste.length}):`);
-        liste.forEach((e, i) => {
+        // Bei einem Import aus einer Datei koennen das hunderte sein — die
+        // Bestaetigung soll lesbar bleiben, nicht den Chat fluten.
+        const zeigen = liste.slice(0, STAND_MAX_EINTRAEGE);
+        zeigen.forEach((e, i) => {
           const teile = Object.entries(def.felder || {})
             .map(([n]) => e[n])
             .filter((v) => v !== undefined && v !== null && String(v).trim() !== '');
           zeilen.push(`   ${i + 1}. ${teile.join(' ')}`);
         });
+        if (liste.length > zeigen.length) {
+          zeilen.push(`   … und ${liste.length - zeigen.length} weitere`);
+        }
       }
     } else if (wert !== undefined && wert !== null && String(wert).trim() !== '') {
       zeilen.push(`• ${label(feld, def)}: ${wert}`);
@@ -185,6 +204,47 @@ function wendeOpsAn(daten, ops, schema) {
   return { daten: neu, angewandt, abgelehnt };
 }
 
+// Zerlegt an Zeilengrenzen, damit keine Tabellenzeile zerschnitten wird.
+function stueckle(text, max = DOK_STUECK_ZEICHEN) {
+  const zeilen = String(text || '').split('\n');
+  const stuecke = [];
+  let aktuell = '';
+  for (const z of zeilen) {
+    if (aktuell.length + z.length + 1 > max && aktuell) {
+      stuecke.push(aktuell);
+      aktuell = '';
+    }
+    aktuell += (aktuell ? '\n' : '') + z;
+    if (stuecke.length >= DOK_MAX_STUECKE) break;
+  }
+  if (aktuell && stuecke.length < DOK_MAX_STUECKE) stuecke.push(aktuell);
+  return stuecke;
+}
+
+// Eigener Prompt fuer Dateiauszuege: nur Listeneintraege, kein Zustand im
+// Kontext. Der waechst sonst mit jedem Haeppchen und frisst das Budget.
+function baueDokumentPrompt(experte, listenFeld, teil, gesamt) {
+  const def = experte.schema[listenFeld];
+  const unter = Object.entries(def.felder || {})
+    .map(([n, t]) => `${n} (${String(t).replace('?', '')}${String(t).endsWith('?') ? ', optional' : ''})`)
+    .join(', ');
+
+  return `Du liest Auszug ${teil} von ${gesamt} aus einer Datei (Lagerliste, Lieferschein oder Tabelle) und wandelst JEDE Artikelzeile in einen Listeneintrag um.
+
+Jeder Eintrag hat: ${unter}
+
+Regeln:
+- NUR Artikelzeilen. Ueberschriften, Spaltenkoepfe, Summen- und Leerzeilen ueberspringen.
+- Jede Artikelzeile wird GENAU EIN Eintrag. Nichts zusammenfassen, nichts weglassen.
+- Ohne erkennbare Menge: menge 1.
+- Enthaelt der Auszug keine Artikelzeile, gib ein leeres ops-Array zurueck.
+${experte.extraktionsHinweise ? '\nFACHLICHE HINWEISE:\n' + experte.extraktionsHinweise : ''}
+
+Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, kein Markdown, kein Kommentar:
+
+{"ops":[{"op":"liste_hinzu","feld":"${listenFeld}","wert":{...}}, ...]}`;
+}
+
 // ─────────────────────────────────────────────────────────── Extraktions-Call
 
 function baueExtraktionsPrompt(experte, daten) {
@@ -232,6 +292,51 @@ AUSSCHLIESSLICH ein JSON-Objekt, kein Markdown, kein Kommentar:
 {"ops":[ ... ], "bestaetigt": false, "abbruch": false}`;
 }
 
+// Erstes Listenfeld des Schemas — dorthin wandern Zeilen aus einer Datei.
+function listenFeldVon(schema) {
+  const treffer = Object.entries(schema).find(([, def]) => istListe(def));
+  return treffer ? treffer[0] : null;
+}
+
+// Liest eine laengere Datei stueckweise aus und sammelt die Listeneintraege.
+async function extrahiereAusDokument(experte, dokInhalt, dienste) {
+  const listenFeld = listenFeldVon(experte.schema);
+  if (!listenFeld) return { ops: [], stuecke: 0, fehler: 0 };
+
+  const stuecke = stueckle(dokInhalt);
+  const ops = [];
+  let fehler = 0;
+
+  for (let i = 0; i < stuecke.length; i++) {
+    const prompt = baueDokumentPrompt(experte, listenFeld, i + 1, stuecke.length);
+    let teil = null;
+
+    // Ein zweiter Versuch je Auszug. Reasoning-Modelle liefern gelegentlich eine
+    // leere Antwort; beim Lagerbestand waere jede stillschweigend verlorene
+    // Zeile ein falscher Bestand.
+    for (let versuch = 0; versuch < 2 && !teil; versuch++) {
+      try {
+        teil = extrahiere(await dienste.chat(prompt, stuecke[i], { maxTokens: DOK_TOKENS }));
+      } catch (err) {
+        dienste.protokoll?.('Fehler',
+          `Dateiauszug ${i + 1}/${stuecke.length} (${experte.id}), Versuch ${versuch + 1}: ${err.message}`);
+      }
+    }
+    if (!teil || !Array.isArray(teil.ops)) {
+      fehler++;
+      dienste.protokoll?.('Warnung',
+        `Dateiauszug ${i + 1}/${stuecke.length} (${experte.id}) lieferte nichts Verwertbares.`);
+      continue;
+    }
+    for (const op of teil.ops) {
+      if (ops.length >= MAX_LISTENEINTRAEGE) break;
+      ops.push({ ...op, feld: listenFeld, op: 'liste_hinzu' });
+    }
+    if (ops.length >= MAX_LISTENEINTRAEGE) break;
+  }
+  return { ops, stuecke: stuecke.length, fehler };
+}
+
 // ──────────────────────────────────────────────────────────────── Hauptablauf
 //
 // dienste = { chat(systemPrompt, userText), protokoll(typ, text) }
@@ -239,8 +344,13 @@ AUSSCHLIESSLICH ein JSON-Objekt, kein Markdown, kein Kommentar:
 
 async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste) {
   const schema = experte.schema;
-  const eingabe = [String(text || '').trim(), dokInhalt ? `\n\nInhalt der beigefügten Datei:\n${dokInhalt}` : '']
-    .join('').trim();
+  const dok = String(dokInhalt || '').trim();
+  // Kurze Anhaenge wandern in die normale Extraktion, lange werden separat und
+  // stueckweise gelesen — sonst passt die Antwort nicht ins Token-Budget.
+  const grosseDatei = dok.length > DOK_STUECK_ZEICHEN;
+  const eingabe = grosseDatei
+    ? String(text || '').trim()
+    : [String(text || '').trim(), dok ? `\n\nInhalt der beigefügten Datei:\n${dok}` : ''].join('').trim();
 
   let vorgang = speicher.lade(chatId, themaId);
   if (!vorgang || vorgang.experteId !== experte.id) {
@@ -253,14 +363,15 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste
     return { text: `${experte.emoji || ''} ${experte.name}: Vorgang verworfen. Du kannst jederzeit neu anfangen.`.trim() };
   }
 
-  // 1) KI schlägt Änderungen vor
-  let vorschlag;
-  try {
-    const roh = await dienste.chat(baueExtraktionsPrompt(experte, vorgang.daten), eingabe);
-    vorschlag = extrahiere(roh) || {};
-  } catch (err) {
-    dienste.protokoll?.('Fehler', `Extraktion ${experte.id} (${chatId}/${themaId}): ${err.message}`);
-    return { text: 'Ich konnte deine Angaben gerade nicht auswerten. Schick sie mir bitte nochmal.' };
+  // 1) KI schlägt Änderungen vor — aus der Nachricht ...
+  let vorschlag = {};
+  if (eingabe) {
+    try {
+      vorschlag = extrahiere(await dienste.chat(baueExtraktionsPrompt(experte, vorgang.daten), eingabe)) || {};
+    } catch (err) {
+      dienste.protokoll?.('Fehler', `Extraktion ${experte.id} (${chatId}/${themaId}): ${err.message}`);
+      return { text: 'Ich konnte deine Angaben gerade nicht auswerten. Schick sie mir bitte nochmal.' };
+    }
   }
 
   if (vorschlag.abbruch === true) {
@@ -268,8 +379,34 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste
     return { text: `${experte.emoji || ''} ${experte.name}: Vorgang verworfen.`.trim() };
   }
 
+  // ... und, bei einer groesseren Datei, stueckweise aus deren Inhalt.
+  let dokOps = [];
+  let dokBericht = null;
+  if (grosseDatei) {
+    const r = await extrahiereAusDokument(experte, dok, dienste);
+    dokOps = r.ops;
+    dokBericht = r;
+    dienste.protokoll?.('Vorgang',
+      `${experte.id}: Datei in ${r.stuecke} Auszug/Auszuegen gelesen, ` +
+      `${dokOps.length} Zeile(n) erkannt${r.fehler ? `, ${r.fehler} Auszug/Auszuege ohne Ergebnis` : ''}`);
+  }
+
+  // Eine Datei ohne verwertbaren Inhalt darf nicht als "nichts angegeben"
+  // durchgehen — sonst fragt der Bot alles ab, was in der Datei steht.
+  if (grosseDatei && dokOps.length === 0) {
+    return {
+      text: `${experte.emoji || ''} *${experte.name}*\n\n`.trim() +
+        `\n\n⚠️ Aus der Datei konnte ich keine Artikelzeilen lesen ` +
+        `(${dokBericht.stuecke} Auszug/Auszüge geprüft).\n\n` +
+        `Hilfreich ist eine Tabelle mit einer Zeile je Artikel und erkennbarer ` +
+        `Menge und Bezeichnung. Du kannst mir die Positionen auch einfach schreiben ` +
+        `oder diktieren.`
+    };
+  }
+
   // 2) Code wendet an
-  const { daten, angewandt, abgelehnt } = wendeOpsAn(vorgang.daten, vorschlag.ops, schema);
+  const alleOps = [...(Array.isArray(vorschlag.ops) ? vorschlag.ops : []), ...dokOps];
+  const { daten, angewandt, abgelehnt } = wendeOpsAn(vorgang.daten, alleOps, schema);
   vorgang.daten = daten;
   if (abgelehnt.length) {
     dienste.protokoll?.('Vorgang', `${experte.id}: verworfene Operationen — ${abgelehnt.join('; ')}`);
@@ -280,6 +417,14 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste
   const kopf = `${experte.emoji || ''} *${experte.name}*`.trim();
   const stand = baueStand(daten, schema);
 
+  // Ein unvollstaendiger Import muss auffallen. Ein Lagerbestand, dem still
+  // ein Fuenftel fehlt, ist schlimmer als ein sichtbarer Fehlschlag.
+  const importWarnung = (dokBericht && dokBericht.fehler > 0)
+    ? `\n\n⚠️ *Unvollständig:* ${dokBericht.fehler} von ${dokBericht.stuecke} Auszügen der Datei ` +
+      `konnte ich nicht lesen. Es fehlen also vermutlich Zeilen. Prüf die Liste unten, ` +
+      `bevor du bestätigst — oder schick die Datei nochmal.`
+    : '';
+
   if (fehlt.length > 0) {
     vorgang.status = speicher.STATUS.SAMMELT;
     speicher.speichere(chatId, themaId, vorgang);
@@ -288,8 +433,8 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste
       ? `\n\n_Nicht übernommen: ${abgelehnt.join(', ')}_`
       : '';
     return {
-      text: `${kopf}\n\n*Stand:*\n${stand}\n\n⚠️ Es fehlt noch:\n${fragen.map((f) => '• ' + f).join('\n')}` +
-        hinweisAbgelehnt
+      text: `${kopf}\n\n*Stand:*\n${stand}${importWarnung}` +
+        `\n\n⚠️ Es fehlt noch:\n${fragen.map((f) => '• ' + f).join('\n')}` + hinweisAbgelehnt
     };
   }
 
@@ -301,7 +446,7 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste
     vorgang.status = speicher.STATUS.WARTET_BESTAETIGUNG;
     speicher.speichere(chatId, themaId, vorgang);
     return {
-      text: `${kopf}\n\n*Stand:*\n${stand}\n\nAlles da. Soll ich das so ausführen?`,
+      text: `${kopf}\n\n*Stand:*\n${stand}${importWarnung}\n\nAlles da. Soll ich das so ausführen?`,
       knoepfe: [
         { text: '✅ Ja, ausführen', daten: `vorgang_ok:${themaId}` },
         { text: '❌ Abbrechen', daten: `vorgang_stop:${themaId}` }
@@ -353,5 +498,8 @@ module.exports = {
   istVollstaendig,
   baueStand,
   schemaAlsText,
-  baueExtraktionsPrompt
+  baueExtraktionsPrompt,
+  stueckle,
+  extrahiereAusDokument,
+  listenFeldVon
 };
