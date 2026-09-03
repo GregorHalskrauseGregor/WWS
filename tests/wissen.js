@@ -12,7 +12,7 @@ const pruefe = (name, fn) => {
 };
 
 console.log('\n── Dateien laden ──');
-pruefe('alle sechs Dateien sind lesbar', () => {
+pruefe('alle Wissens-Dateien sind lesbar', () => {
   const w = wissen.lade();
   for (const d of wissen.DATEIEN) assert(w[d], `${d}.yaml fehlt oder ist leer`);
 });
@@ -259,7 +259,49 @@ pruefe('kompakt und vollständig', () => {
   assert(k.includes('ARTIKELARTEN'));
   assert(k.includes('messing=rotguss'));
   assert(k.includes('1 stange = 6 m'));
-  assert(k.length < 2500, 'Kontext zu lang: ' + k.length + ' Zeichen');
+  // Mit Umgangssprache-Tabelle und Hinweistext wird der Kontext groesser.
+  // Wird nur fuer Lager-/Vorgangs-Extraktion aufgerufen, kein Chat-Prompt.
+  assert(k.length < 6000, 'Kontext zu lang: ' + k.length + ' Zeichen');
+});
+pruefe('Umgangssprache ist im KI-Kontext', () => {
+  const k = wissen.promptKontext();
+  assert(k.includes('HANDWERKER-UMGANGSSPRACHE'), 'Strukturblock fehlt');
+  assert(k.includes('HINWEISE ZUR INTERPRETATION'), 'Hinweistext fehlt');
+  assert(k.includes('Schwarzrohr'), 'Standard-Synonym fehlt');
+  assert(k.includes('BEE KSL'), 'Marken-Synonym fehlt');
+});
+
+console.log('\n── Umgangssprache: Code-Helfer ──');
+pruefe('Synonym-Liste ist geladen', () => {
+  const liste = wissen.umgangsspracheSynonyme();
+  assert(liste.length > 10, 'zu wenig Einträge: ' + liste.length);
+  assert(liste.some((s) => s.von === 'Schwarzrohr' && s.nach === 'Stahlrohr'));
+  assert(liste.some((s) => s.von === 'BEE' && s.nach === 'Kugelhahn BEE'));
+  assert(liste.some((s) => s.von === 'Prestabo' && s.nach === 'Pressfitting C-Stahl'));
+});
+pruefe('Hinweistext ist geladen', () => {
+  const h = wissen.umgangsspracheHinweis();
+  assert(h.length > 50, 'zu kurz: ' + h.length);
+  assert(h.toLowerCase().includes('v2a'), 'V2A-Hinweis fehlt');
+});
+pruefe('Synonym wird im Text ersetzt (case-insensitive, Wortgrenze)', () => {
+  assert.equal(wissen.wendeUmgangsspracheAn('Schwarzrohr DN50'), 'Stahlrohr DN50');
+  assert.equal(wissen.wendeUmgangsspracheAn('schwarzes Rohr 22mm'), 'Stahlrohr 22mm');
+  assert.equal(wissen.wendeUmgangsspracheAn('SCHWARZROHR 1 ZOLL'), 'Stahlrohr 1 ZOLL');
+});
+pruefe('Wortgrenzen verhindern Teiltreffer', () => {
+  // "Cu" darf NICHT in "Cupfer" oder "Cur" ersetzt werden
+  // (regex \\b verhindert das — "Cu" muss eigene Wortgrenze haben)
+  assert.equal(wissen.wendeUmgangsspracheAn('Cur Rohr'), 'Cur Rohr',
+    '"Cu" darf nicht in "Cur" matchen');
+  // "Ms" darf nicht in "Mist" matchen
+  assert.equal(wissen.wendeUmgangsspracheAn('Mist'), 'Mist');
+  // "HT" muss eigenständiges Wort sein, "Hitze" bleibt
+  assert.equal(wissen.wendeUmgangsspracheAn('Hitze'), 'Hitze');
+});
+pruefe('mehrere Synonyme hintereinander', () => {
+  assert.equal(wissen.wendeUmgangsspracheAn('Prestabo V2A 22mm'),
+    'Pressfitting C-Stahl Edelstahl 1.4301 22mm');
 });
 
 console.log('\n── Dazulernen ──');

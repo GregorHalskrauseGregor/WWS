@@ -1,0 +1,138 @@
+# Handwerker-Umgangssprache und Marken-/Serienkuerzel fuer Material-Bezeichnungen
+#
+# Zweck: der Bot soll im Chat genannte, von der Lager-Bezeichnung abweichende
+# Materialbegriffe korrekt zuordnen. Das Dokument hat zwei Teile:
+#
+#   1. STRUKTUR: deterministische 1:1-Zuordnungen unter "synonym:".
+#      Der Code wendet sie beim Lookup an (Groß-/Kleinschreibung und
+#      Wortgrenzen werden normalisiert). Reihenfolge ist egal.
+#
+#   2. HINWEIS: freie Notizen unter "hinweis:". Die KI liest sie und
+#      wendet sie im Kontext an. Hier landet, was nicht in eine 1:1-Tabelle
+#      passt: Marken + Serien + Material in einem Atemzug,区域性 Bezeichnungen,
+#      mehrdeutige Faelle.
+#
+# Pflegehinweis: hier GEHOEREN NUR Artikel-Bezeichnungen hinein. Dimension
+# (DN, Zoll, mm) ist Sache der Engine (dimensionen.yaml), Materialerkennung
+# laeuft weiter ueber synonyme.yaml (material:/presssystem:). Was hier steht,
+# ist der Wortschatz, mit dem ein Handwerker einen Artikel benennt.
+
+synonym:
+  # --- Material-Slang -> technische Bezeichnung ---
+  - von: Schwarzrohr
+    nach: Stahlrohr
+  - von: schwarzes Rohr
+    nach: Stahlrohr
+  - von: schwarze Rohre
+    nach: Stahlrohr
+  - von: Niro
+    nach: Edelstahl
+  - von: Nirosta
+    nach: Edelstahl
+  - von: V2A
+    nach: Edelstahl 1.4301
+  - von: V4A
+    nach: Edelstahl 1.4571
+  - von: Ms
+    nach: Messing
+  - von: Cu
+    nach: Kupfer
+  - von: Alu
+    nach: Aluminium
+  - von: VA
+    nach: Edelstahl
+
+  # --- Press-Systeme: Markenname -> generische Bezeichnung mit Material ---
+  - von: Prestabo
+    nach: Pressfitting C-Stahl
+  - von: Mapress
+    nach: Pressfitting Edelstahl
+  - von: Profipress
+    nach: Pressfitting Kupfer
+  - von: Sanpress
+    nach: Pressfitting Edelstahl
+  - von: Temponox
+    nach: Pressfitting Edelstahl
+  - von: Raxofix
+    nach: Pressfitting Edelstahl
+  - von: Smartpress
+    nach: Pressfitting Edelstahl
+  - von: Geopress
+    nach: Pressfitting
+
+  # --- Rohr-Typen ---
+  - von: Mehrschicht
+    nach: Verbundrohr
+  - von: Mehrschichtverbund
+    nach: Verbundrohr
+  - von: Alupex
+    nach: Verbundrohr
+  - von: Mepla
+    nach: Verbundrohr
+  - von: PE-X
+    nach: PE-X Rohr
+  - von: PEX
+    nach: PE-X Rohr
+  - von: HT-Rohr
+    nach: Abwasserrohr PP
+  - von: KG-Rohr
+    nach: Abwasserrohr PVC
+  - von: SML
+    nach: Abwasserrohr Gusseisen
+  - von: HT
+    nach: Abwasserrohr PP
+  - von: KG
+    nach: Abwasserrohr PVC
+
+  # --- Marken als Alias (Kugelhähne, Ventile, Fittinge) ---
+  - von: BEE
+    nach: Kugelhahn BEE
+  - von: KSL
+    nach: Kugelhahn BEE KSL
+  - von: Bonfix
+    nach: Fitting Bonfix
+  - von: Kemper
+    nach: Armatur Kemper
+  - von: Viega
+    nach: Fitting Viega
+  - von: Geberit
+    nach: Fitting Geberit
+  - von: TECE
+    nach: Installationselement TECE
+  - von: Schell
+    nach: Armatur Schell
+
+hinweis: |
+  Kontext und Feinheiten, die nicht in die 1:1-Tabelle oben passen.
+  Die KI liest das und wendet es im Einzelfall an.
+
+  - "Schwarzrohr" und "Stahlrohr" sind dasselbe: unbeschichtetes Stahlrohr.
+    Im SHK-Bereich der Standard für Heizungs- und Gasleitungen. Steht im
+    Gegensatz zu "verzinktem Stahlrohr" (feuerverzinkt, vz).
+  - "V2A" ist 1.4301 (Standard-CrNi-Stahl, nicht säurebeständig), "V4A" ist
+    1.4571 (säurebeständig, molybdänhaltig). "Niro" und "Nirosta" sind
+    umgangssprachliche Sammelbegriffe für Edelstahl allgemein.
+  - "Messing" (Ms) wird im Fitting-Bereich praktisch immer als Rotguss
+    geführt; die Bezeichnungen sind im Lager oft synonym.
+  - Press-Systeme aus C-Stahl, Edelstahl und Kupfer heißen je nach
+    Hersteller anders: Prestabo (Viega, C-Stahl), Mapress (Geberit,
+    Edelstahl), Profipress (Viega, Kupfer), Sanpress (Viega, Edelstahl),
+    Temponox (Viega, Edelstahl, Nachfolger Raxofix), Geopress (Geberit).
+    Wenn der User "Prestabo 22mm" sagt, ist meist ein Pressfitting aus
+    C-Stahl gemeint. Im Lager steht dann aber oft die generische
+    Bezeichnung "Pressfitting C-Stahl 22mm" (oder seltener
+    "Pressfitting Prestabo 22mm"). Beide sind richtig.
+  - "BEE" und "KSL" sind zusammen der Kurzhinweis auf eine Kugelhahn-Serie
+    der Marke BEE (Standard-Leicht, Flanschanschluss nach DIN 3202). Im
+    Lager steht eher "Kugelhahn DN80" oder "Kugelhahn BEE KSL DN80".
+  - "Bonfix" ist eine niederländische SHK-Marke, im Fachhandel häufig für
+    Press-Fittings und Kugelhähne.
+  - "Kemper" ist ein Armaturen-Hersteller, vor allem Trinkwasser.
+  - "Schell" = Marke für Eckventile und Sanitärarmaturen.
+  - "Geberit" und "TECE" sind Marken für Vorwand-Installationselemente.
+  - Im Zweifelsfall: was der User sagt, ist meist der Marken- oder
+    Serienname. Die Lager-Bezeichnung enthält oft den generischen Begriff
+    (z. B. "Pressfitting Edelstahl 22mm" statt "Mapress 22mm" oder
+    "Kugelhahn DN80" statt "BEE KSL DN80"). Der Code sucht in beiden
+    Richtungen — er probiert sowohl die bezeichnung des Users als auch
+    die kanonisierte Form.
