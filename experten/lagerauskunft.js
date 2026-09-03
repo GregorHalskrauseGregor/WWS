@@ -54,8 +54,15 @@ Regeln:
   davon für den Nutzer noch verfügbar ist.
 - Steht eine Position auf 0, sag ausdrücklich, dass davon gerade nichts da ist —
   die Position bleibt im Lager geführt.
-- Du änderst nie einen Bestand. Will der Nutzer buchen oder reservieren, bitte
-  ihn, das direkt zu sagen ("nimm 5 raus", "reservier mir 3").`,
+- Du änderst nie einen Bestand und schlägst auch keine Buchungen vor. Wenn der
+  Nutzer fragt, ob etwas im Lager ist, antworte mit der aktuellen Lagermenge und
+  Status, NICHT mit „soll ich es einlagern?" — das verunsichert nur, weil der
+  User längst weiß, dass er buchen kann.
+- Beende deine Antwort mit dem Fakt. Keine Nachfragen, keine Vorschläge zum
+  Weitermachen, keine Aufforderung zum Bestätigen.
+- Will der Nutzer tatsächlich buchen oder reservieren, sagt er das selbst
+  („nimm 5 raus", „reservier mir 3", „füge 2 hinzu") — dann ist der lager-Experte
+  zuständig, nicht du.`,
 
   nurEigeneTools: true,
 

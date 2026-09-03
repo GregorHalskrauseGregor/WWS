@@ -121,13 +121,14 @@ module.exports = {
 
   zustaendigWenn:
     'Der Nutzer will den LAGERBESTAND ÄNDERN oder Material vormerken:\n' +
-    '  einlagern — "füge X hinzu", "kommt ins Lager", "Wareneingang", "Rückgabe", "übrig geblieben"\n' +
-    '  entnehmen — "nimm X raus", "entnehme", "verbraucht", "vom Lager geholt"\n' +
-    '  reservieren — "reservier mir", "leg X zurück", "merk X vor", "brauche ich nächste Woche"\n' +
+    '  einlagern — "füge X hinzu", "kommt ins Lager", "Wareneingang", "Rückgabe", "übrig geblieben", "ich habe X", "lagere X ein"\n' +
+    '  entnehmen — "nimm X raus", "entnehme", "verbraucht", "vom Lager geholt", "ich benötige X", "ich brauche X", "X vom Lager", "hole X"\n' +
+    '  reservieren — "reservier mir", "leg X zurück", "merk X vor", "brauche ich nächste Woche", "halt X zurück"\n' +
     '  freigeben — "Reservierung aufheben", "brauche das doch nicht"\n' +
     'NICHT gemeint: reine Fragen nach dem Bestand ohne Buchung (das ist Lagerauskunft), ' +
     'die Lagerliste als Datei (das ist Lagerliste), das Aufmaß einer Baustelle ' +
-    '(das ist Materialaufmaß und ändert den Lagerbestand nicht) und Bestellungen beim Großhändler.',
+    '(das ist Materialaufmaß und ändert den Lagerbestand nicht), Bestellungen beim Großhändler ' +
+    'und allgemeine Preisfragen (das ist Recherche).',
 
   implementiert: true,
 

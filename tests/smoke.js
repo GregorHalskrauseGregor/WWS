@@ -95,6 +95,19 @@ pruefe('ungültige Operationen werden abgelehnt, nicht geraten', () => {
   assert.equal(r.abgelehnt.length, 3, 'erwartet 3 Ablehnungen, war ' + r.abgelehnt.length);
   assert.equal(r.angewandt.length, 0);
 });
+pruefe('Ops ohne Feld werden still verworfen, nicht in abgelehnt gemeldet', () => {
+  // Modellfehler, kein User-Problem — der User soll „unbekanntes Feld: undefined"
+  // nicht zu sehen bekommen, das macht nur ratlos.
+  const r = motor.wendeOpsAn({}, [
+    { op: 'setze', wert: 'x' },
+    { op: 'liste_hinzu', wert: {} },
+    { op: 'setze', feld: '', wert: 'x' },
+    { op: 'setze', feld: 'projektnummer', wert: '26-0111' }
+  ], schema);
+  assert.equal(r.angewandt.length, 1, 'nur die gültige op übernommen');
+  assert.equal(r.angewandt[0], 'projektnummer = 26-0111');
+  assert.equal(r.abgelehnt.length, 0, 'Op-ohne-Feld-Fehler nicht in der User-Sicht');
+});
 pruefe('Vollzustand bleibt bei leerem ops erhalten', () => {
   const start = { projektnummer: 'X', positionen: [{ bezeichnung: 'A' }] };
   const r = motor.wendeOpsAn(start, [], schema);

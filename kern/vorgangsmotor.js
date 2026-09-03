@@ -145,7 +145,14 @@ function wendeOpsAn(daten, ops, schema) {
 
   for (const op of Array.isArray(ops) ? ops : []) {
     const feld = op && op.feld;
-    const def = feld && schema[feld];
+    if (!feld || typeof feld !== 'string') {
+      // Leere oder fehlende Feldnamen kommen vor, wenn die KI in einer
+      // Korrekturschleife ein op ohne klaren Anker liefert. Das ist ein
+      // Modellfehler — den User damit zu behelligen („unbekanntes Feld:
+      // undefined") hilft niemandem, also still verwerfen.
+      continue;
+    }
+    const def = schema[feld];
     if (!def) { abgelehnt.push(`unbekanntes Feld: ${feld}`); continue; }
 
     try {
