@@ -29,14 +29,18 @@ const anbieter = {
 };
 
 // leicht = Aufgabe im Hintergrund, darf ein kleineres Modell nutzen
+// maxTokens ist NICHT nur die Antwortlaenge: bei Reasoning-Modellen (MiniMax M2,
+// o-Serie, R1-Abkoemmlinge) zaehlt das Nachdenken mit. Ein zu kleines Budget
+// fuehrt dort zu einer LEEREN Antwort statt zu einer kurzen — genau daran ist
+// der Router zuerst gescheitert. Die Werte sind deshalb bewusst grosszuegig.
 const ROLLEN = {
-  chat: { leicht: false },
-  extraktion: { leicht: false },
-  router: { leicht: true },
-  summary: { leicht: true },
+  chat:       { leicht: false, maxTokens: 2000 },
+  extraktion: { leicht: false, maxTokens: 2500 },
+  router:     { leicht: true,  maxTokens: 1800 },
+  summary:    { leicht: true,  maxTokens: 1800 },
   // Rückwärtskompatibel — alter Code ruft weiter main/light
-  main: { leicht: false },
-  light: { leicht: true }
+  main:       { leicht: false, maxTokens: 2000 },
+  light:      { leicht: true,  maxTokens: 1500 }
 };
 
 function env(name) {
@@ -51,6 +55,13 @@ function anbieterNameFuer(rolle) {
     || (leicht ? env('AI_PROVIDER_LIGHT') : null)
     || env('AI_PROVIDER')
     || 'anthropic';
+}
+
+// Pro Rolle ueberschreibbar, z.B. AI_MAX_TOKENS_ROUTER=2500
+function tokenBudget(rolle) {
+  const ausEnv = parseInt(env(`AI_MAX_TOKENS_${String(rolle).toUpperCase()}`) || '', 10);
+  if (Number.isFinite(ausEnv) && ausEnv > 0) return ausEnv;
+  return (ROLLEN[rolle] || ROLLEN.chat).maxTokens;
 }
 
 function modellFuer(anbieterName, rolle) {
@@ -98,7 +109,8 @@ function getProvider(rolle = 'chat') {
       const opts = {
         ...options,
         rolle: options.rolle || (leicht ? 'light' : 'main'),
-        model: options.model || modellFuer(name, rolle) || undefined
+        model: options.model || modellFuer(name, rolle) || undefined,
+        maxTokens: options.maxTokens || tokenBudget(rolle)
       };
       try {
         const antwort = await modul.chat(systemPrompt, userMessage, opts);
@@ -133,8 +145,8 @@ function uebersicht() {
     .filter((r) => !['main', 'light'].includes(r))
     .map((r) => {
       const name = anbieterNameFuer(r);
-      return { rolle: r, anbieter: name, modell: modellFuer(name, r) || 'Modell-Standard' };
+      return { rolle: r, anbieter: name, modell: modellFuer(name, r) || 'Modell-Standard', maxTokens: tokenBudget(r) };
     });
 }
 
-module.exports = { getProvider, uebersicht, ROLLEN, _lohntFallback: lohntFallback };
+module.exports = { getProvider, uebersicht, ROLLEN, tokenBudget, _lohntFallback: lohntFallback };

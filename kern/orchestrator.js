@@ -86,7 +86,9 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
   ratelimit.zaehleNachricht(chatId);
 
   // 1) EINE Entscheidung: welcher Faden, welche Aktion, welcher Experte.
-  const routing = await router.entscheide({ text, dokInfo, chatId, chat: dienste.routerChat });
+  const routing = await router.entscheide({
+    text, dokInfo, chatId, chat: dienste.routerChat, protokoll: dienste.protokoll
+  });
   dienste.protokoll?.('Router',
     `thema=${routing.thema.id || 'neu'} aktion=${routing.aktion} ` +
     `experte=${routing.experte || '-'} confidence=${routing.confidence.toFixed(2)}` +
@@ -98,18 +100,26 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
     thema = themen.erstelleThema(chatId, routing.thema.name || router.leiteThemaNamenAb(text));
   }
 
+  // Auch kurze Zwischenschritte kommen in den Verlauf. Sonst fehlt dem Router
+  // beim naechsten Mal genau die Rueckfrage, auf die der Nutzer gerade antwortet.
+  const beende = (antwort) => {
+    themen.haengeNachrichtAn(chatId, thema.id, 'user', text || '(Datei)');
+    themen.haengeNachrichtAn(chatId, thema.id, 'assistant', antwort);
+    return { text: antwort, themaId: thema.id };
+  };
+
   // 3) Reine Datei-Ablage
   if (['vorlage_speichern', 'style_speichern', 'dokument_speichern'].includes(routing.aktion)) {
     if (datei && datei.buffer) {
       const abgelegt = legeDateiAb(chatId, datei, routing.aktion);
-      if (abgelegt) return abgelegt;
+      if (abgelegt) return beende(abgelegt.text);
     }
-    return { text: routing.hinweis || 'Schick mir die Datei dazu, dann lege ich sie ab.' };
+    return beende(routing.hinweis || 'Schick mir die Datei dazu, dann lege ich sie ab.');
   }
 
   // 4) Rückfrage
   if (routing.aktion === 'nachfragen') {
-    return { text: routing.hinweis || 'Kannst du mir dazu noch etwas mehr Kontext geben?' };
+    return beende(routing.hinweis || 'Kannst du mir dazu noch etwas mehr Kontext geben?');
   }
 
   const experte = routing.aktion === 'verarbeiten' && routing.experte

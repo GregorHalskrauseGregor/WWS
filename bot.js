@@ -45,9 +45,20 @@ const chatProvider = getProvider('chat');
 const nurText = (provider) => async (systemPrompt, userMessage, opts = {}) =>
   (await provider.chat(systemPrompt, userMessage, opts)).content;
 
+// Reasoning-Modelle (MiniMax M2 u.a.) denken in einem eigenen Feld und geben
+// erst danach die Antwort aus. Reicht das Token-Budget nicht, bleibt content
+// leer, obwohl das JSON schon im Reasoning steht. Fuer Aufrufer, die JSON
+// erwarten, bergen wir es von dort — bei Antworten an den Nutzer NICHT, sonst
+// bekaeme er das Nachdenken des Modells zu lesen.
+const jsonText = (provider) => async (systemPrompt, userMessage, opts = {}) => {
+  const a = await provider.chat(systemPrompt, userMessage, opts);
+  if (a.content && a.content.trim()) return a.content;
+  return a.reasoning || '';
+};
+
 const antwortChat = nurText(chatProvider);
-const routerChat = nurText(getProvider('router'));
-const extraktionChat = nurText(getProvider('extraktion'));
+const routerChat = jsonText(getProvider('router'));
+const extraktionChat = jsonText(getProvider('extraktion'));
 const summaryChat = nurText(getProvider('summary'));
 
 const geladen = experten.listeStatus();

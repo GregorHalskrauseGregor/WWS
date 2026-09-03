@@ -17,7 +17,11 @@
 const { toolsFuerOpenAI } = require('../tools');
 
 const DEFAULT_MODEL = 'MiniMax-M2';
-const LIGHT_MODEL = 'MiniMax-M2-mini';
+// KEIN geratener Name als Light-Modell. "MiniMax-M2-mini" gibt es nicht — die
+// API antwortet darauf mit HTTP 200 und base_resp 2013 ("unknown model"), also
+// mit einer leeren Antwort. Ohne ausdrueckliches MINIMAX_MODEL_LIGHT nehmen wir
+// deshalb dasselbe Modell wie fuer die Hauptrolle.
+const LIGHT_MODEL = null;
 
 // Mapping bekannter MiniMax-Tool-Namen auf unsere. Falls das Modell im
 // Training andere Namen gelernt hat, mappen wir sie hier auf unsere Tools.
@@ -92,8 +96,10 @@ function entferneXMLToolCalls(text) {
 async function chat(systemPrompt, userMessage, options = {}) {
   const istLight = options.rolle === 'light';
   const model = options.model
-    || (istLight ? process.env.MINIMAX_MODEL_LIGHT : process.env.MINIMAX_MODEL)
-    || (istLight ? LIGHT_MODEL : DEFAULT_MODEL);
+    || (istLight ? process.env.MINIMAX_MODEL_LIGHT : null)
+    || (istLight ? LIGHT_MODEL : null)
+    || process.env.MINIMAX_MODEL
+    || DEFAULT_MODEL;
   const maxTokens = options.maxTokens || (istLight ? 500 : 2000);
 
   // Messages-Liste wird vom Bot-Loop aufgebaut, wenn Tools im Spiel sind.
@@ -130,6 +136,15 @@ async function chat(systemPrompt, userMessage, options = {}) {
   if (!res.ok) {
     throw new Error('MiniMax-API-Fehler: ' + JSON.stringify(data).slice(0, 500));
   }
+  // MiniMax meldet Fehler INNERHALB einer HTTP-200-Antwort ueber base_resp.
+  // Ohne diese Pruefung kommt bei einem unbekannten Modell, erschoepftem
+  // Guthaben oder Rate-Limit einfach ein LEERER String zurueck — der Aufrufer
+  // haelt das fuer eine gueltige Antwort. Genau daran ist der Router
+  // stillschweigend gescheitert.
+  const status = data.base_resp && data.base_resp.status_code;
+  if (status) {
+    throw new Error(`MiniMax-API-Fehler ${status}: ${data.base_resp.status_msg || 'unbekannt'}`);
+  }
 
   const message = data.choices?.[0]?.message || {};
   const rawContent = message.content || '';
@@ -158,7 +173,19 @@ async function chat(systemPrompt, userMessage, options = {}) {
     content = entferneXMLToolCalls(rawContent);
   }
 
-  return { content, toolCalls };
+  // MiniMax M2 ist ein Reasoning-Modell: es denkt in reasoning_content und gibt
+  // erst danach die eigentliche Antwort aus. Das Nachdenken zaehlt gegen
+  // max_tokens — ist das Budget zu klein, bleibt content LEER, obwohl die
+  // Anfrage technisch erfolgreich war. Wir geben das Reasoning deshalb mit
+  // zurueck, damit JSON-Aufrufer (Router, Extraktion) daraus noch bergen
+  // koennen, und melden abgeschnittene Antworten deutlich.
+  const reasoning = message.reasoning_content || message.reasoning || '';
+  const abgeschnitten = data.choices?.[0]?.finish_reason === 'length';
+  if (!content && !toolCalls && abgeschnitten) {
+    console.warn(`MiniMax: Antwort nach ${maxTokens} Token abgeschnitten, ` +
+      `content leer (Reasoning verbrauchte das Budget). maxTokens erhoehen.`);
+  }
+  return { content, toolCalls, reasoning, abgeschnitten };
 }
 
 function parseArgs(s) {

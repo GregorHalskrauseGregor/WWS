@@ -1,35 +1,25 @@
 // Router — die EINE Entscheidungsstelle des Bots.
 //
-// Er beantwortet für jede eingehende Nachricht in EINEM KI-Aufruf zwei Fragen,
-// die vorher getrennt (und damit widersprüchlich) beantwortet wurden:
-//
-//   1. Zu WELCHEM Gesprächsfaden gehört diese Nachricht?
+// Beantwortet pro Nachricht zwei Fragen in einem KI-Aufruf:
+//   1. Zu WELCHEM Gesprächsfaden gehört sie?
 //   2. WAS soll damit passieren — welcher Experte, oder normaler Chat?
 //
-// Vorher lief dafür erst kontext.klassifiziereThema() (kleines Modell, kannte
-// keine laufenden Vorgänge) und danach ein separater Router (kannte den Faden
-// nicht mehr). Ein "ändere Position 2 auf 5" konnte so im falschen Thema landen.
-// Jetzt sieht der Router alle Themen MIT ihrem offenen Vorgang und entscheidet
-// beides zusammen.
+// ROBUSTHEIT (aus einem echten Ausfall gelernt):
+// Ein Reasoning-Modell kann eine LEERE Antwort liefern, wenn sein Nachdenken
+// das Token-Budget aufbraucht. Passiert das, darf der Bot NICHT jedes Mal ein
+// neues Thema anlegen — genau das hat vier Nachrichten in vier Themen zersplittert
+// und den Kontext zerstört. Deshalb gilt hier:
+//   - im Zweifel das JÜNGSTE Thema weiterführen, nie ein neues erzwingen
+//   - ein neues Thema nur, wenn das Modell es ausdrücklich sagt (oder es keines gibt)
+//   - bei leerer Antwort ein zweiter Versuch mit einem kurzen Prompt
 
 const fs = require('fs');
 const { SCHWELLEN } = require('../config');
+const { extrahiere } = require('./json');
 const experten = require('../experten');
 const themen = require('../themen');
 const vorgang = require('./vorgang');
 
-function standard(aktion, hinweis, confidence, themaId) {
-  return {
-    thema: { id: themaId || null, name: null, neu: !themaId },
-    aktion,
-    experte: null,
-    dok_typ: null,
-    hinweis: hinweis || null,
-    confidence: confidence != null ? confidence : 0.0
-  };
-}
-
-// Fallback-Themenname, wenn die KI keinen liefert: die ersten Wörter.
 function leiteThemaNamenAb(text) {
   const sauber = String(text || '').replace(/\s+/g, ' ').trim();
   if (!sauber) return 'Neues Thema';
@@ -37,115 +27,131 @@ function leiteThemaNamenAb(text) {
   return woerter.length > 50 ? woerter.slice(0, 47) + '...' : woerter;
 }
 
-function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock }) {
-  return `Du bist der Router eines Handwerker-Bots (SHK). Für jede Nachricht entscheidest du ZWEI Dinge auf einmal:
-(1) zu welchem Gesprächsfaden (Thema) sie gehört, und (2) was mit ihr passieren soll.
+// Modelle schreiben Experten-IDs gern mit deutschen Sonderzeichen zurueck
+// (ß statt ss, Umlaute) oder mit Bindestrich. Die Absicht ist dann eindeutig,
+// also vergleichen wir normalisiert, statt die Entscheidung wegzuwerfen.
+function normId(wert) {
+  return String(wert || '')
+    .toLowerCase()
+    .replace(/ß/g, 'ss').replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+    .replace(/[^a-z0-9]/g, '');
+}
 
-════════ THEMEN DES NUTZERS (jüngstes zuerst) ════════
+function findeExperteNachsichtig(liste, wert) {
+  if (!wert) return null;
+  const ziel = normId(wert);
+  if (!ziel) return null;
+  return liste.find((e) => normId(e.id) === ziel) || null;
+}
+
+function themenIndex(chatId) {
+  try { return themen.ladeIndex(chatId); } catch { return []; }
+}
+
+// Der sichere Rückfall: das zuletzt aktive Thema (Index ist danach sortiert).
+function juengstesThemaId(chatId) {
+  const index = themenIndex(chatId);
+  return index.length ? index[0].id : null;
+}
+
+function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confidence }) {
+  return {
+    thema: themaId
+      ? { id: themaId, name: null, neu: false }
+      : { id: null, name: themaName || 'Neues Thema', neu: true },
+    aktion: aktion || 'konversation',
+    experte: experte || null,
+    dok_typ: dokTyp || null,
+    hinweis: hinweis || null,
+    confidence: typeof confidence === 'number' ? confidence : 0
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────── Prompts
+
+function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock }) {
+  return `Du bist der Router eines Handwerker-Bots (SHK). Entscheide für die Nachricht ZWEI Dinge:
+(1) zu welchem Gesprächsfaden sie gehört, (2) was damit passieren soll.
+
+Antworte NUR mit einem JSON-Objekt. Kein Fließtext, keine Erklärung, kein Markdown.
+Halte dich kurz beim Nachdenken — die Entscheidung ist meist offensichtlich.
+
+THEMEN (jüngstes zuerst):
 ${themenBlock}
 
-════════ VERFÜGBARE EXPERTEN ════════
-Nur diese sind wählbar. Nicht gelistete Experten existieren für dich nicht.
+EXPERTEN (nur diese sind wählbar):
 ${expertenBlock}
 ${verlaufBlock}
-════════ AKTIONEN ════════
-- "verarbeiten"        Ein Experte soll die Nachricht bearbeiten. Setze "experte".
-- "konversation"       Normaler Chat, kein Experte nötig.
-- "nachfragen"         Anfrage unklar. Formuliere die Rückfrage in "hinweis".
-- "vorlage_speichern"  Angehängte Datei ist ein leeres Formular / eine Vorlage.
-- "style_speichern"    Angehängte Datei ist eine Formatvorlage / ein Style-Sheet.
-- "dokument_speichern" Datei soll nur abgelegt werden, keine Verarbeitung.
+AKTIONEN:
+verarbeiten | konversation | nachfragen | vorlage_speichern | style_speichern | dokument_speichern
 
-════════ REGELN ZUR THEMENWAHL ════════
-- Gehört die Nachricht inhaltlich zu einem bestehenden Thema, gib dessen ID zurück.
-- Ein Thema mit OFFENEM VORGANG ist stark bevorzugt, wenn die Nachricht dazu passt:
-  Ergänzungen ("noch 3 Wandscheiben"), Korrekturen ("Position 2 auf 5", "Bezeichnung
-  war Heizung"), Bestätigungen ("passt", "fertig", "ok", "mach das PDF") und
-  Rückfrage-Antworten gehören IMMER zu dem Vorgang, der darauf wartet.
-- Laufen MEHRERE Vorgänge, entscheide am Inhalt: eine Projektnummer, ein Kundenname
-  oder ein Material, das in genau einem Vorgang vorkommt, ordnet die Nachricht dorthin zu.
-  Ist es nicht zu entscheiden, wähle "nachfragen" und frage, welcher Vorgang gemeint ist.
-- Ein klarer Themenwechsel (anderer Sachbereich) ist ein NEUES Thema: gib
-  "thema":"neu" und einen kurzen deutschen "themaName" (2-5 Wörter).
-- Kurze Höflichkeiten ("danke", "ok") gehören zum jüngsten Thema, nicht in ein neues.
+THEMENWAHL:
+- Passt die Nachricht zu einem bestehenden Thema, gib dessen ID exakt zurück.
+- Ein Thema mit OFFENEM VORGANG hat Vorrang, wenn die Nachricht dazu passt:
+  Ergänzungen ("noch 3 Wandscheiben"), Korrekturen ("Position 2 auf 5"),
+  Antworten auf eine Rückfrage ("16 Stück") und Bestätigungen ("passt", "fertig").
+- Eine kurze Antwort ohne eigenes Thema ("16 Stück", "ja", "der zweite") gehört
+  IMMER zum Faden, der zuletzt eine Frage gestellt hat — NIE in ein neues Thema.
+- "neu" nur bei einem klaren Themenwechsel in einen anderen Sachbereich.
 
-════════ REGELN ZUR AKTIONSWAHL ════════
-- Generische Wörter sind KEIN automatischer Auslöser. Interpretiere im Kontext:
-    "ich brauche eine Anleitung"   → Recherche, NICHT Bestellung
-    "höchste Leistung der Pumpe"   → technische Eigenschaft, NICHT Abrechnung
-    "ich schick dir gleich was"    → Ankündigung, also "konversation"
-- "Außerbetriebnahme", "Reparatur", "Wartung" sind keine Aufmaße.
-- Bei einer Datei: Dateiname UND Inhalts-Vorschau beachten.
-    leeres Formular mit Feldern, keine Daten  → vorlage_speichern
-    Lieferschein/Rechnung mit echten Daten    → verarbeiten (passender Experte)
-- Im Zweifel: "konversation" mit niedriger confidence. Lieber nichts als das Falsche.
-- confidence < ${SCHWELLEN.ROUTER_CONFIDENCE}: der Bot führt keine Aktion aus, sondern antwortet normal.
+AKTIONSWAHL:
+- Generische Wörter sind kein Auslöser: "brauche eine Anleitung" = Recherche,
+  "höchste Leistung" = technische Eigenschaft, "schick dir gleich was" = konversation.
+- Läuft im gewählten Thema ein Vorgang, ist die Aktion fast immer "verarbeiten"
+  mit dem Experten dieses Vorgangs.
+- Bei einer Datei: leeres Formular -> vorlage_speichern, Lieferschein mit Daten -> verarbeiten.
+- Im Zweifel "konversation" mit niedriger confidence.
 
-════════ ANTWORTFORMAT ════════
-Antworte AUSSCHLIESSLICH mit genau einem JSON-Objekt, ohne Markdown, ohne Erklärung:
+FORMAT (genau so, eine Zeile):
+{"thema":"<themaId oder neu>","themaName":"<nur bei neu, 2-5 Wörter>","aktion":"<aktion>","experte":"<id oder null>","dok_typ":null,"hinweis":null,"confidence":0.0}`;
+}
 
-{
-  "thema": "<themaId>" oder "neu",
-  "themaName": "<nur wenn thema=neu, 2-5 Wörter deutsch>",
-  "aktion": "verarbeiten|konversation|nachfragen|vorlage_speichern|style_speichern|dokument_speichern",
-  "experte": "<id>" oder null,
-  "dok_typ": "daten|vorlage|anhang" oder null,
-  "hinweis": "<kurzer Text oder null>",
-  "confidence": 0.0-1.0
-}`;
+// Zweiter Versuch, falls die erste Antwort leer blieb: minimal, damit auch ein
+// Reasoning-Modell mit knappem Budget zum Ergebnis kommt.
+function baueKurzPrompt({ themenBlock, expertenBlock }) {
+  return `Router. Antworte NUR mit einem JSON-Objekt, ohne Nachdenken davor.
+
+Themen:
+${themenBlock}
+
+Experten: ${expertenBlock}
+
+{"thema":"<themaId oder neu>","themaName":"","aktion":"verarbeiten|konversation|nachfragen","experte":"<id oder null>","confidence":0.0}`;
 }
 
 function baueThemenBlock(chatId) {
-  let index = [];
-  try { index = themen.ladeIndex(chatId); } catch { index = []; }
-  if (index.length === 0) {
-    return '(noch keine Themen — die erste Nachricht eröffnet eines: thema="neu")';
-  }
-  const offene = vorgang.offeneVorgaenge(chatId);
-  const offenNach = new Map(offene.map((o) => [o.themaId, o]));
-
-  return index.slice(0, 15).map((t) => {
-    const o = offenNach.get(t.id);
-    const vorgangsText = o
-      ? `  ⚠ OFFENER VORGANG: ${o.experteId} (${o.status === 'bestaetigen' ? 'wartet auf Bestätigung' : 'sammelt noch Daten'})`
-      : '';
-    return `- ${t.id} | "${t.name}" | ${t.messageCount || 0} Nachrichten | zuletzt: ${t.lastActivity}${vorgangsText ? '\n' + vorgangsText : ''}`;
+  const index = themenIndex(chatId);
+  if (index.length === 0) return '(noch keine — dies eröffnet das erste: thema="neu")';
+  const offen = new Map(vorgang.offeneVorgaenge(chatId).map((o) => [o.themaId, o]));
+  return index.slice(0, 12).map((t) => {
+    const o = offen.get(t.id);
+    return `- ${t.id} | "${t.name}" | ${t.messageCount || 0} Nachrichten` +
+      (o ? `\n    OFFENER VORGANG: ${o.experteId} (${o.status === 'bestaetigen' ? 'wartet auf Bestätigung' : 'sammelt noch Daten'})` : '');
   }).join('\n');
 }
 
-function baueExpertenBlock(liste) {
-  return liste.map((e) => `- ${e.id} (${e.emoji || ''} ${e.name}): ${e.zustaendigWenn}`).join('\n');
-}
-
-async function baueVerlaufBlock(chatId) {
+function baueVerlaufBlock(chatId) {
   let verlauf = [];
-  try {
-    verlauf = themen.letzteNachrichten(chatId, SCHWELLEN.ROUTER_VERLAUF_ANZAHL) || [];
-  } catch { return ''; }
+  try { verlauf = themen.letzteNachrichten(chatId, SCHWELLEN.ROUTER_VERLAUF_ANZAHL) || []; }
+  catch { return ''; }
   if (verlauf.length === 0) return '';
-  let text = verlauf
-    .map((m) => `${m.rolle === 'user' ? 'User' : 'Bot'}: ${m.inhalt}`)
-    .join('\n');
+  let text = verlauf.map((m) => `${m.rolle === 'user' ? 'User' : 'Bot'}: ${m.inhalt}`).join('\n');
   if (text.length > SCHWELLEN.ROUTER_VERLAUF_MAX_ZEICHEN) {
     text = '...' + text.slice(-SCHWELLEN.ROUTER_VERLAUF_MAX_ZEICHEN);
   }
-  return `\n════════ LETZTE NACHRICHTEN (jüngstes Thema) ════════\n${text}\n`;
+  return `\nLETZTE NACHRICHTEN (jüngstes Thema):\n${text}\n`;
 }
 
-// Erste Zeichen einer Datei als Vorschau — hilft dem Router zu unterscheiden,
-// ob ein PDF eine leere Vorlage oder ein ausgefüllter Lieferschein ist.
 async function dateiVorschau(dokInfo) {
   if (!dokInfo || !dokInfo.pfad) return null;
   try {
-    const stat = fs.statSync(dokInfo.pfad);
-    if (stat.size > SCHWELLEN.VORSCHAU_MAX_BYTES) return null;
+    if (fs.statSync(dokInfo.pfad).size > SCHWELLEN.VORSCHAU_MAX_BYTES) return null;
     const buffer = fs.readFileSync(dokInfo.pfad);
     const istPdf = dokInfo.mimeType === 'application/pdf' ||
       (dokInfo.name && dokInfo.name.toLowerCase().endsWith('.pdf'));
     if (istPdf) {
       try {
-        const pdfParse = require('pdf-parse');
-        const daten = await pdfParse(buffer);
+        const daten = await require('pdf-parse')(buffer);
         return (daten.text || '').slice(0, SCHWELLEN.VORSCHAU_ZEICHEN);
       } catch { return null; }
     }
@@ -156,95 +162,104 @@ async function dateiVorschau(dokInfo) {
   } catch { return null; }
 }
 
-// Robustes JSON-Bergen: Codeblock, dann roher Block, jeweils balanciert.
-function parseJson(roh) {
-  if (!roh || typeof roh !== 'string') return null;
-  const md = roh.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
-  const kandidaten = [];
-  if (md) kandidaten.push(md[1]);
-  const alle = roh.match(/\{[\s\S]*\}/g) || [];
-  kandidaten.push(...alle.reverse());
-  for (const k of kandidaten) {
-    try { return JSON.parse(k); } catch { /* nächsten */ }
-  }
-  return null;
-}
+// ────────────────────────────────────────────────────────────────── Entscheidung
 
-// Hauptfunktion. chat = async (systemPrompt, userText) => string
-async function entscheide({ text, dokInfo, chatId, chat }) {
-  if (typeof chat !== 'function') return standard('konversation', 'kein Chat-Dienst', 0.0);
-  if (!text && !dokInfo) return standard('konversation', 'leere Eingabe', 0.0);
+async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
+  const rueckfall = juengstesThemaId(chatId);
+  const melde = (t) => protokoll && protokoll('Router', t);
+
+  if (typeof chat !== 'function') {
+    return ergebnis({ themaId: rueckfall, themaName: leiteThemaNamenAb(text), hinweis: 'kein Chat-Dienst' });
+  }
+  if (!text && !dokInfo) {
+    return ergebnis({ themaId: rueckfall, themaName: leiteThemaNamenAb(text), hinweis: 'leere Eingabe' });
+  }
 
   const liste = experten.implementierteExperten();
   const themenBlock = baueThemenBlock(chatId);
   const expertenBlock = liste.length
-    ? baueExpertenBlock(liste)
-    : '(keine Experten verfügbar — nur "konversation" möglich)';
-  const verlaufBlock = await baueVerlaufBlock(chatId);
+    ? liste.map((e) => `- ${e.id} (${e.name}): ${e.zustaendigWenn}`).join('\n')
+    : '(keine — nur "konversation" möglich)';
 
   const teile = [];
-  if (text) teile.push('USER-NACHRICHT:\n' + text);
+  if (text) teile.push('NACHRICHT:\n' + text);
   if (dokInfo) {
     const vorschau = await dateiVorschau(dokInfo);
-    teile.push(
-      'ANGEHÄNGTE DATEI:\n' +
-      `- Dateiname: ${dokInfo.name || '(unbekannt)'}\n` +
-      `- MIME-Type: ${dokInfo.mimeType || '(unbekannt)'}\n` +
+    teile.push('DATEI:\n' +
+      `- Name: ${dokInfo.name || '(unbekannt)'}\n` +
+      `- Typ: ${dokInfo.mimeType || '(unbekannt)'}\n` +
       `- Größe: ${dokInfo.size != null ? dokInfo.size + ' Bytes' : '(unbekannt)'}` +
-      (vorschau ? `\n- Inhalt (Anfang):\n${vorschau}` : '')
-    );
+      (vorschau ? `\n- Inhalt (Anfang):\n${vorschau}` : ''));
   }
+  const eingabe = teile.join('\n\n');
 
-  const systemPrompt = baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock });
-
-  let parsed;
+  // Erster Versuch, bei leerem Ergebnis ein zweiter mit kurzem Prompt.
+  let parsed = null;
   try {
-    parsed = parseJson(await chat(systemPrompt, teile.join('\n\n')));
+    parsed = extrahiere(await chat(baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock: baueVerlaufBlock(chatId) }), eingabe));
+    if (!parsed) {
+      melde('Erste Antwort ohne JSON — zweiter Versuch mit Kurz-Prompt.');
+      parsed = extrahiere(await chat(baueKurzPrompt({ themenBlock, expertenBlock: liste.map((e) => e.id).join(', ') }), eingabe));
+    }
   } catch (err) {
-    return standard('konversation', 'Router-Fehler: ' + err.message, 0.0);
+    return ergebnis({ themaId: rueckfall, themaName: leiteThemaNamenAb(text), hinweis: 'Router-Fehler: ' + err.message });
   }
+
   if (!parsed || typeof parsed !== 'object') {
-    return standard('konversation', 'Router lieferte kein gültiges JSON', 0.0);
+    // WICHTIG: bestehenden Faden weiterführen, nicht zersplittern.
+    return ergebnis({ themaId: rueckfall, themaName: leiteThemaNamenAb(text), hinweis: 'kein gültiges JSON, führe jüngstes Thema fort' });
   }
 
-  // ---- Validierung: die KI schlägt vor, der Code entscheidet ----
-  let bekannteThemen = [];
-  try { bekannteThemen = themen.ladeIndex(chatId).map((t) => t.id); } catch { /* leer */ }
+  const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0;
+  const bekannte = themenIndex(chatId).map((t) => t.id);
+  const themaRoh = String(parsed.thema || '').trim();
 
-  const themaRoh = String(parsed.thema || 'neu');
-  const themaBekannt = bekannteThemen.includes(themaRoh);
-  const thema = themaBekannt
-    ? { id: themaRoh, name: null, neu: false }
-    : { id: null, name: (parsed.themaName || leiteThemaNamenAb(text)).trim(), neu: true };
+  // Thema bestimmen — neu nur auf ausdrücklichen Wunsch oder wenn es keines gibt.
+  let themaId;
+  if (bekannte.includes(themaRoh)) themaId = themaRoh;
+  else if (/^neu$/i.test(themaRoh) || bekannte.length === 0) themaId = null;
+  else themaId = rueckfall; // unbekannte ID = Halluzination -> nicht zersplittern
 
-  const erlaubteAktionen = ['verarbeiten', 'konversation', 'nachfragen',
+  const erlaubt = ['verarbeiten', 'konversation', 'nachfragen',
     'vorlage_speichern', 'style_speichern', 'dokument_speichern'];
-  if (!erlaubteAktionen.includes(parsed.aktion)) {
-    return { ...standard('konversation', 'unbekannte Aktion: ' + parsed.aktion, 0.0), thema };
+
+  // Nachsicht bei einem haeufigen Formfehler: Modelle schreiben die Experten-ID
+  // gern direkt ins Feld aktion, statt aktion=verarbeiten zu setzen und die ID
+  // ins Feld experte zu legen. Die Absicht ist dann eindeutig, also korrigieren
+  // wir das, statt in die Konversation zurueckzufallen.
+  let aktion = parsed.aktion;
+  if (!erlaubt.includes(aktion) && findeExperteNachsichtig(liste, aktion)) {
+    parsed.experte = aktion;
+    aktion = 'verarbeiten';
+  }
+  parsed.aktion = aktion;
+
+  if (!erlaubt.includes(parsed.aktion)) {
+    return ergebnis({ themaId, themaName: parsed.themaName || leiteThemaNamenAb(text), hinweis: 'unbekannte Aktion: ' + parsed.aktion, confidence });
   }
 
   let experte = null;
   if (parsed.aktion === 'verarbeiten') {
-    experte = liste.find((e) => e.id === parsed.experte) ? parsed.experte : null;
+    const treffer = findeExperteNachsichtig(liste, parsed.experte);
+    experte = treffer ? treffer.id : null; // immer die echte ID zurueckgeben
     if (!experte) {
-      // Stub oder Halluzination — nicht ausführen, aber Thema behalten.
-      return { ...standard('konversation', 'ungültiger Experte: ' + parsed.experte, 0.0), thema };
+      return ergebnis({ themaId, themaName: parsed.themaName || leiteThemaNamenAb(text), hinweis: 'ungültiger Experte: ' + parsed.experte, confidence });
     }
   }
 
-  const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.0;
   if (confidence < SCHWELLEN.ROUTER_CONFIDENCE) {
-    return { ...standard('konversation', `Confidence zu niedrig (${confidence})`, confidence), thema };
+    return ergebnis({ themaId, themaName: parsed.themaName || leiteThemaNamenAb(text), hinweis: `Confidence zu niedrig (${confidence})`, confidence });
   }
 
-  return {
-    thema,
+  return ergebnis({
+    themaId,
+    themaName: parsed.themaName || leiteThemaNamenAb(text),
     aktion: parsed.aktion,
     experte,
-    dok_typ: parsed.dok_typ || null,
-    hinweis: parsed.hinweis || null,
+    dokTyp: parsed.dok_typ,
+    hinweis: parsed.hinweis,
     confidence
-  };
+  });
 }
 
-module.exports = { entscheide, leiteThemaNamenAb, _parseJson: parseJson };
+module.exports = { entscheide, leiteThemaNamenAb, juengstesThemaId };

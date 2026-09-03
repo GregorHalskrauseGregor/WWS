@@ -121,7 +121,19 @@ Statt „ein großes und ein kleines Modell" ist jede Aufgabe einzeln konfigurie
 AI_PROVIDER_ROUTER=openai
 OPENAI_MODEL_ROUTER=gpt-4o-mini      # billig + schnell fürs Routing
 AI_FALLBACK_KETTE=openai,minimax     # springt bei 429/5xx/Timeout ein
+AI_MAX_TOKENS_ROUTER=1800            # Reasoning zählt mit, siehe unten
 ```
+
+**Zum Token-Budget:** Bei Reasoning-Modellen (MiniMax M2 und Verwandte) zählt das
+Nachdenken gegen `max_tokens`. Ist das Budget zu knapp, kommt keine kurze Antwort
+zurück, sondern eine **leere** — deshalb sind die Vorgaben je Rolle großzügig
+(Router 1800, Extraktion 2500). Bei einem eigenen Modell mit langem Reasoning
+notfalls über `AI_MAX_TOKENS_<ROLLE>` erhöhen.
+
+**Zu Modellnamen:** Trag nur Modelle ein, die es wirklich gibt. MiniMax
+beantwortet einen unbekannten Namen mit HTTP 200 und einem Fehler im Antwort-Rumpf
+(`base_resp`). Der Provider prüft das inzwischen und wirft einen echten Fehler —
+ohne diese Prüfung sah es aus, als hätte das Modell einfach nichts geantwortet.
 
 Die Fallback-Kette greift nur bei **Ausfall-Fehlern**. Ein Programmierfehler
 wird nicht stillschweigend an den nächsten Anbieter weitergereicht.

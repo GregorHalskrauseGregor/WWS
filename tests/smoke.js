@@ -301,6 +301,103 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
     assert(providers.getProvider('light').name);
   });
 
+  console.log('\n── Regression: Router-Ausfall zersplittert den Chat nicht ──');
+  // Echter Vorfall: MiniMax lieferte leere Antworten, der Router legte bei jeder
+  // Nachricht ein neues Thema an — vier Nachrichten, vier Themen, kein Kontext.
+  const themenModul = require('../themen');
+  const echtLadeIndex = themenModul.ladeIndex;
+  const fakeThemen = [
+    { id: 'thema-neuestes', name: 'Aufmaß Müller', messageCount: 4, lastActivity: '2026-09-03T12:30:00Z' },
+    { id: 'thema-aelter', name: 'Anleitung', messageCount: 2, lastActivity: '2026-09-01T09:00:00Z' }
+  ];
+  themenModul.ladeIndex = () => fakeThemen;
+  try {
+    await pruefeAsync('leere Modellantwort -> juengstes Thema, NICHT neu', async () => {
+      const r = await router.entscheide({ text: '16 Stück', chatId: 1, chat: async () => '' });
+      assert.equal(r.thema.neu, false, 'hat ein neues Thema angelegt');
+      assert.equal(r.thema.id, 'thema-neuestes');
+      assert.equal(r.aktion, 'konversation');
+    });
+    await pruefeAsync('halluzinierte Themen-ID -> juengstes Thema', async () => {
+      const r = await router.entscheide({ text: 'x', chatId: 1,
+        chat: async () => '{"thema":"thema-gibtsnicht","aktion":"konversation","confidence":0.9}' });
+      assert.equal(r.thema.id, 'thema-neuestes', 'ID wurde nicht abgefangen');
+    });
+    await pruefeAsync('ausdrueckliches "neu" wird respektiert', async () => {
+      const r = await router.entscheide({ text: 'ganz anderes Thema', chatId: 1,
+        chat: async () => '{"thema":"neu","themaName":"Neue Sache","aktion":"konversation","confidence":0.9}' });
+      assert.equal(r.thema.neu, true);
+      assert.equal(r.thema.name, 'Neue Sache');
+    });
+    await pruefeAsync('bestehende ID wird uebernommen', async () => {
+      const r = await router.entscheide({ text: 'dazu noch was', chatId: 1,
+        chat: async () => '{"thema":"thema-aelter","aktion":"konversation","confidence":0.9}' });
+      assert.equal(r.thema.id, 'thema-aelter');
+    });
+    await pruefeAsync('zweiter Versuch bei leerer erster Antwort', async () => {
+      let ruf = 0;
+      const r = await router.entscheide({ text: 'Aufmaß 12m Rohr', chatId: 1, chat: async () => {
+        ruf++;
+        return ruf === 1 ? '' : '{"thema":"neu","aktion":"verarbeiten","experte":"materialaufmass","confidence":0.9}';
+      } });
+      assert.equal(ruf, 2, 'kein zweiter Versuch unternommen');
+      assert.equal(r.experte, 'materialaufmass');
+    });
+
+    console.log('\n── Regression: Formfehler des Modells abfangen ──');
+    await pruefeAsync('Experten-ID im Feld "aktion"', async () => {
+      const r = await router.entscheide({ text: 'brauche eine Anleitung', chatId: 1,
+        chat: async () => '{"thema":"neu","aktion":"recherche","confidence":0.95}' });
+      assert.equal(r.aktion, 'verarbeiten');
+      assert.equal(r.experte, 'recherche');
+    });
+    await pruefeAsync('ID mit deutschem ß wird erkannt', async () => {
+      const r = await router.entscheide({ text: 'Aufmaß', chatId: 1,
+        chat: async () => '{"thema":"neu","aktion":"verarbeiten","experte":"materialaufmaß","confidence":0.9}' });
+      assert.equal(r.experte, 'materialaufmass', 'ß-Schreibweise nicht abgefangen');
+    });
+    await pruefeAsync('Stub bleibt trotz Nachsicht gesperrt', async () => {
+      const r = await router.entscheide({ text: 'rechnung', chatId: 1,
+        chat: async () => '{"thema":"neu","aktion":"leistungserfassung","confidence":0.99}' });
+      assert.equal(r.aktion, 'konversation');
+    });
+  } finally { themenModul.ladeIndex = echtLadeIndex; }
+
+  console.log('\n── Regression: MiniMax-Fehler in HTTP-200-Antwort ──');
+  // MiniMax meldet Fehler im Rumpf, nicht im Status. Vorher kam dabei still
+  // ein leerer String zurueck, den der Aufrufer fuer eine Antwort hielt.
+  const minimax = require('../providers/minimax');
+  const echtesFetch = global.fetch;
+  await pruefeAsync('unbekanntes Modell wirft statt leer zurueckzugeben', async () => {
+    global.fetch = async () => ({ ok: true, json: async () => ({
+      base_resp: { status_code: 2013, status_msg: "invalid params, unknown model 'minimax-m2-mini'" },
+      choices: [{ message: { content: '' } }]
+    }) });
+    try {
+      await minimax.chat('sys', 'user', {});
+      throw new Error('haette werfen muessen');
+    } catch (e) {
+      assert.match(e.message, /2013/, 'Fehlercode fehlt: ' + e.message);
+    } finally { global.fetch = echtesFetch; }
+  });
+  await pruefeAsync('ohne MINIMAX_MODEL_LIGHT wird kein Modellname geraten', async () => {
+    let gesendet = null;
+    global.fetch = async (url, opt) => {
+      gesendet = JSON.parse(opt.body);
+      return { ok: true, json: async () => ({ base_resp: { status_code: 0 }, choices: [{ message: { content: 'ok' } }] }) };
+    };
+    const altLight = process.env.MINIMAX_MODEL_LIGHT;
+    delete process.env.MINIMAX_MODEL_LIGHT;
+    process.env.MINIMAX_MODEL = 'MiniMax-M2';
+    try {
+      await minimax.chat('s', 'u', { rolle: 'light' });
+      assert.equal(gesendet.model, 'MiniMax-M2', 'geratenes Light-Modell: ' + gesendet.model);
+    } finally {
+      global.fetch = echtesFetch;
+      if (altLight) process.env.MINIMAX_MODEL_LIGHT = altLight;
+    }
+  });
+
   console.log('\n── MERKE-Hooks ──');
   pruefe('Fakt wird herausgeschnitten', () => {
     const r = orchestrator._trenneMerkeHooks('Alles klar.\n[MERKE: mag Kaffee]');
