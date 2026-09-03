@@ -32,8 +32,13 @@ module.exports = {
   beschreibung: 'Beantwortet Fragen zum Lagerbestand: was ist da, wie viel, in welchem Zustand, was ist reserviert. Ändert nichts.',
 
   zustaendigWenn:
-    'Der Nutzer FRAGT nach dem Bestand, ohne zu buchen: "was haben wir noch", "wie viel X ist da", ' +
-    '"hab ich genug Y", "zeig mir alles in DN70", "ist das reserviert". ' +
+    'Der Nutzer will den LAGERBESTAND WISSEN oder NACHGUCKEN, ohne zu buchen: ' +
+    '"was haben wir noch", "wie viel X ist da", "hab ich genug Y", "zeig mir alles in DN70", ' +
+    '"ist das reserviert", "ist X im Lager", "gibt es X", "such im Lager nach X", ' +
+    '"schau im Material nach", "guck mal im Bestand", "haben wir X auf Lager", ' +
+    '"X müsste doch da sein", "warum ist X nicht da". ' +
+    'Auch Rückfragen wie "aber Kupferrohr 22mm ist doch im lager" — der Nutzer will, ' +
+    'dass du im Lager nachschaust, nicht im Internet. ' +
     'NICHT gemeint: Ein- und Auslagern oder Reservieren (das ist Lager) und die ' +
     'komplette Liste als Excel-Datei (das ist Lagerliste).',
 

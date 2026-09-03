@@ -220,6 +220,29 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
     });
     assert.match(text, /abgebrochen/);
   });
+  await pruefeAsync('Timeout der Tool-Bestätigung beendet die Schleife ohne KI-Folgefrage', async () => {
+    // Bestätigung hängt zu lange — weder erlaubt noch aktiv abgelehnt.
+    // Der Bot soll nicht aus dem Wissen weiterreden („Preis? Wo kaufen?"),
+    // sondern knapp abbrechen.
+    let runden = 0;
+    const provider = {
+      name: 'anthropic',
+      chat: async () => {
+        runden++;
+        return runden === 1
+          ? { content: '', toolCalls: [{ id: 't1', name: 'web_search', args: { query: 'x' } }] }
+          : { content: 'Antwort ohne Tool', toolCalls: [] };
+      }
+    };
+    const text = await toolloop.laufe({
+      chatId: 1, systemPrompt: 's', messages: [{ role: 'user', content: 'q' }],
+      werkzeuge: { definitionen: [{ name: 'web_search' }], ausfuehren: async () => 'nie' },
+      provider,
+      dienste: { frageBestaetigung: async () => ({ erlaubt: false, grund: 'Zeitüberschreitung' }), protokoll: () => {} }
+    });
+    assert.equal(runden, 1, 'KI darf nach Timeout nicht weiterreden');
+    assert.match(text, /Bestätigung war zu lange offen/);
+  });
 
   console.log('\n── Neue Experten (Test der Architektur) ──');
   pruefe('Bestellung ist ein Vorgangs-Experte', () => {

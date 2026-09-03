@@ -53,6 +53,16 @@ async function laufe({ chatId, systemPrompt, messages, werkzeuge, provider, dien
     if (!bestaetigung.erlaubt) {
       dienste.protokoll?.('Sicherheit', `Tool-Aufruf abgelehnt (${chatId}): ` +
         antwort.toolCalls.map((c) => c.name).join(', '));
+      // Timeout ist KEIN aktives Nein: der Nutzer hat weder erlaubt noch
+      // abgelehnt, sondern die Bestätigung einfach offen gelassen. Eine
+      // Folgefrage „was willst du?" (Preis? Wo kaufen? Technische Details?)
+      // ist Lärm — der Nutzer tippt ohnehin als Nächstes. Bei einer
+      // ausdrücklichen Ablehnung hingegen darf die KI aus ihrem Wissen
+      // antworten, das ist der bisherige Pfad.
+      if (bestaetigung.grund === 'Zeitüberschreitung') {
+        return 'Den vorgeschlagenen Werkzeug-Aufruf habe ich nicht ausgeführt ' +
+          '(die Bestätigung war zu lange offen). Schreib mir einfach, was du als Nächstes brauchst.';
+      }
       haengeToolRundeAn(verlauf, antwort, antwort.toolCalls.map((c) => ({
         id: c.id, name: c.name,
         result: `Tool-Aufruf wurde nicht ausgeführt: ${bestaetigung.grund}. ` +

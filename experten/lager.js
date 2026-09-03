@@ -157,7 +157,11 @@ module.exports = {
     '- Mengenmuster: "5 Stahlbögen DN50", "12m Kupferrohr", "3x Fitting".\n' +
     '- Einheiten normalisieren: "Stück"/"stk" -> "Stk.", sonst "m", "lfm", "kg".\n' +
     '- Ohne Mengenangabe: menge 1, einheit "Stk.".\n' +
-    '- DN-Angaben immer zusammenschreiben: "DN 50" -> "DN50".\n' +
+    '- Maßangaben IMMER in die Bezeichnung übernehmen und normalisieren:\n' +
+    '  "DN 50" -> "DN50", "DN-20" -> "DN20"; "20er"/"22er"/"28er" -> "20mm"/"22mm"/"28mm";\n' +
+    '  "halbzöllig" -> "1/2 Zoll" oder "DN15", "3/4 zöllig" -> "3/4 Zoll" oder "DN20";\n' +
+    '  "1 zöllig" -> "1 Zoll" oder "DN25", "5/4 zöllig" -> "5/4 Zoll" oder "DN32".\n' +
+    '  Die Maßeinheit gehört in die bezeichnung, sonst findet findePosition die Zeile nicht.\n' +
     '- zustand ist eines von "neu", "gebraucht", "verschmutzt". Ohne Angabe: "neu".\n' +
     '- kategorie aus dieser festen Liste wählen, sonst "Sonstiges":\n    ' + KATEGORIEN.join(', ') + '\n' +
     '- Diktier- und OCR-Fehler still korrigieren.\n\n' + wissen.promptKontext(),
