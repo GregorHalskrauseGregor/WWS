@@ -5,8 +5,9 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node tests/smoke.js && node tests/e2e.js",
+    "test": "node tests/smoke.js && node tests/lager.js && node tests/e2e.js",
     "test:smoke": "node tests/smoke.js",
+    "test:lager": "node tests/lager.js",
     "test:e2e": "node tests/e2e.js"
   },
   "dependencies": {

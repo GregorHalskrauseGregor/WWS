@@ -17,7 +17,10 @@ function expertenDefinition(t) {
 }
 
 // Liefert Definitionen + Executor für den aktuellen Kontext.
-function fuerExperte(experte, provider) {
+// kontext (z.B. { chatId }) wird an experteneigene Werkzeuge durchgereicht —
+// die Lagerauskunft braucht die Chat-ID, um zu sagen, wie viel fuer DIESE
+// Person nach Abzug fremder Reservierungen noch verfuegbar ist.
+function fuerExperte(experte, provider, kontext = {}) {
   const eigene = (experte && experte.tools) || [];
   const nurEigene = experte && experte.nurEigeneTools === true;
 
@@ -30,7 +33,7 @@ function fuerExperte(experte, provider) {
     const eigen = eigene.find((t) => t.name === name);
     if (eigen) {
       try {
-        const roh = await eigen.ausfuehren(args || {});
+        const roh = await eigen.ausfuehren(args || {}, kontext);
         return typeof roh === 'string' ? roh : JSON.stringify(roh);
       } catch (err) {
         return `Fehler im Werkzeug ${name}: ${err.message}`;

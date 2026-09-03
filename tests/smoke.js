@@ -34,7 +34,7 @@ const status = experten.listeStatus();
 pruefe('Experten geladen', () => assert(status.length >= 5, `nur ${status.length}`));
 pruefe('keine Ladefehler (alle Pflichtfelder)', () => {
   const ids = status.map((e) => e.id);
-  for (const soll of ['materialaufmass', 'material_entnahme', 'material_rueckgabe', 'recherche']) {
+  for (const soll of ['materialaufmass', 'lager', 'lagerliste', 'lagerauskunft', 'bestellung', 'recherche']) {
     assert(ids.includes(soll), `${soll} fehlt — Vertragsprüfung fehlgeschlagen`);
   }
 });

@@ -1,27 +1,41 @@
 // 🔎 Lagerauskunft — Prompt-Experte mit eigenen Werkzeugen.
 //
-// Hier zahlt sich kern/werkzeuge.js aus: der Experte bringt drei eigene Tools
-// mit, die die KI im Gespräch aufrufen darf. Damit ist der Lagerbestand per
-// normaler Ansprache erreichbar, ohne dass irgendein Ablauf fest verdrahtet ist —
-// "was hab ich in DN70?", "reicht das für 12 Meter?", "zeig mir die Pumpen".
-//
-// Nur lesend: dieser Experte ändert nie einen Bestand.
+// Beantwortet Fragen zum Bestand, ohne etwas zu buchen. Die KI entscheidet, was
+// gefragt ist; die Zahlen liefert ausschließlich Code über diese Werkzeuge.
 
 const material = require('../material');
 const { PFADE } = require('../config');
 
 const laden = () => material.leseAlle(PFADE.MATERIAL_XLSX);
 
+function beschreibePosition(p, chatId) {
+  const gesamt = material.gesamtbestand(p);
+  const reserviert = material.reserviertGesamt(p);
+  const eigen = material.reserviertVon(p, chatId);
+  const teile = [
+    `${p.bezeichnung} (${p.kategorie})`,
+    `Bestand ${gesamt} ${p.einheit}`,
+    `neu ${p.mengeNeu || 0} / gebraucht ${p.mengeGebraucht || 0} / verschmutzt ${p.mengeVerschmutzt || 0}`
+  ];
+  if (reserviert > 0) {
+    teile.push(`reserviert ${reserviert}` + (eigen > 0 ? ` (davon ${eigen} von dir)` : ''));
+    teile.push(`für dich verfügbar ${material.verfuegbarFuer(p, chatId)}`);
+  }
+  if (gesamt === 0) teile.push('AKTUELL NICHT VORRÄTIG');
+  return teile.join(' · ');
+}
+
 module.exports = {
   id: 'lagerauskunft',
   name: 'Lagerauskunft',
   emoji: '🔎',
-  beschreibung: 'Beantwortet Fragen zum Lagerbestand: was ist da, wie viel, in welchem Zustand. Ändert nichts.',
+  beschreibung: 'Beantwortet Fragen zum Lagerbestand: was ist da, wie viel, in welchem Zustand, was ist reserviert. Ändert nichts.',
 
   zustaendigWenn:
-    'Der Nutzer FRAGT nach dem Lagerbestand, ohne etwas zu buchen: "was haben wir noch", ' +
-    '"wie viel X ist da", "hab ich genug Y", "zeig mir alles in DN70", "was liegt in Kategorie Z". ' +
-    'NICHT gemeint sind Entnahmen, Rückgaben oder Bestellungen — die ändern den Bestand.',
+    'Der Nutzer FRAGT nach dem Bestand, ohne zu buchen: "was haben wir noch", "wie viel X ist da", ' +
+    '"hab ich genug Y", "zeig mir alles in DN70", "ist das reserviert". ' +
+    'NICHT gemeint: Ein- und Auslagern oder Reservieren (das ist Lager) und die ' +
+    'komplette Liste als Excel-Datei (das ist Lagerliste).',
 
   implementiert: true,
 
@@ -29,66 +43,70 @@ module.exports = {
 Du beantwortest Fragen zum Lagerbestand mit den Werkzeugen bestand_suchen, bedarf_pruefen und ganze_liste.
 
 Regeln:
-- Nutze immer ein Werkzeug, statt Bestände zu raten. Rate NIEMALS eine Menge.
+- Nutze immer ein Werkzeug. Rate NIEMALS eine Menge.
 - Findet die Suche nichts, sag das klar und schlag eine andere Schreibweise vor.
-- Antworte kurz: Menge, Einheit, Zustand. Keine langen Erklärungen.
-- Du änderst nie einen Bestand. Will der Nutzer buchen, sag ihm, er soll die
-  Entnahme oder Rückgabe direkt formulieren.`,
+- Antworte knapp: Menge, Einheit, Zustand. Bei Reservierungen sag dazu, wie viel
+  davon für den Nutzer noch verfügbar ist.
+- Steht eine Position auf 0, sag ausdrücklich, dass davon gerade nichts da ist —
+  die Position bleibt im Lager geführt.
+- Du änderst nie einen Bestand. Will der Nutzer buchen oder reservieren, bitte
+  ihn, das direkt zu sagen ("nimm 5 raus", "reservier mir 3").`,
 
-  // Nur die eigenen Werkzeuge — Web-Suche hat hier nichts zu suchen.
   nurEigeneTools: true,
 
   tools: [
     {
       name: 'bestand_suchen',
-      beschreibung: 'Sucht Artikel im Lager (unscharf, DN-Schreibweisen egal) und gibt Bestand je Zustand zurück.',
+      beschreibung: 'Sucht Artikel im Lager (unscharf, DN-Schreibweise egal) und gibt Bestand, Zustand und Reservierungen zurück.',
       parameter: {
         type: 'object',
         properties: { suchbegriff: { type: 'string', description: 'Artikelname oder Teil davon, z. B. "Kupferrohr 22" oder "DN70"' } },
         required: ['suchbegriff']
       },
-      ausfuehren: async ({ suchbegriff }) => {
+      ausfuehren: async ({ suchbegriff }, kontext = {}) => {
         const treffer = material.suchePositionen(suchbegriff, await laden());
-        if (treffer.length === 0) return `Kein Treffer für "${suchbegriff}".`;
-        return treffer.map((p) =>
-          `${p.bezeichnung} (${p.kategorie}): neu ${p.mengeNeu || 0}, gebraucht ${p.mengeGebraucht || 0}, ` +
-          `verschmutzt ${p.mengeVerschmutzt || 0} ${p.einheit || ''} — gesamt ${material.gesamtbestand(p)}`
-        ).join('\n');
+        if (!treffer.length) return `Kein Treffer für "${suchbegriff}".`;
+        return treffer.map((p) => beschreibePosition(p, kontext.chatId)).join('\n');
       }
     },
     {
       name: 'bedarf_pruefen',
-      beschreibung: 'Prüft für eine Liste von Bedarfen, ob der Bestand reicht. Ändert nichts.',
+      beschreibung: 'Prüft für eine Liste von Bedarfen, ob der verfügbare Bestand reicht. Bucht nichts.',
       parameter: {
         type: 'object',
         properties: {
           bedarfe: {
-            type: 'array',
-            description: 'Liste der benötigten Artikel',
+            type: 'array', description: 'Liste der benötigten Artikel',
             items: {
               type: 'object',
-              properties: {
-                bezeichnung: { type: 'string' },
-                menge: { type: 'number' }
-              },
+              properties: { bezeichnung: { type: 'string' }, menge: { type: 'number' } },
               required: ['bezeichnung', 'menge']
             }
           }
         },
         required: ['bedarfe']
       },
-      ausfuehren: async ({ bedarfe }) => {
-        const ergebnis = material.pruefeBedarf(bedarfe || [], await laden());
-        return JSON.stringify(ergebnis);
+      ausfuehren: async ({ bedarfe }, kontext = {}) => {
+        const r = material.pruefeBedarf(bedarfe || [], await laden(), kontext.chatId);
+        if (!r.length) return 'Keine auswertbaren Bedarfe übergeben.';
+        return r.map((x) =>
+          `${x.bezeichnung}: angefragt ${x.angefragt} ${x.einheit}, Bestand ${x.bestand}, ` +
+          `verfügbar ${x.verfuegbar}` + (x.reserviert ? ` (${x.reserviert} reserviert)` : '') +
+          ` -> ${x.reicht ? 'reicht' : 'REICHT NICHT'}`).join('\n');
       }
     },
     {
       name: 'ganze_liste',
-      beschreibung: 'Gibt den kompletten Lagerbestand nach Kategorien gruppiert zurück. Nur nutzen, wenn wirklich alles gefragt ist.',
+      beschreibung: 'Kompletter Bestand nach Kategorien. Nur nutzen, wenn wirklich alles gefragt ist — für eine Datei gibt es die Lagerliste.',
       parameter: { type: 'object', properties: {} },
-      ausfuehren: async () => {
-        const liste = material.ganzeListe(await laden());
-        return typeof liste === 'string' ? liste : JSON.stringify(liste);
+      ausfuehren: async (_args, kontext = {}) => {
+        const gruppen = material.ganzeListe(await laden());
+        const zeilen = [];
+        for (const [kat, eintraege] of Object.entries(gruppen)) {
+          zeilen.push(`== ${kat} ==`);
+          for (const p of eintraege) zeilen.push('  ' + beschreibePosition(p, kontext.chatId));
+        }
+        return zeilen.length ? zeilen.join('\n') : 'Das Lager ist leer.';
       }
     }
   ]

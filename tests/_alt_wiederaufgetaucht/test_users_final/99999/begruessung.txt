@@ -1,0 +1,43 @@
+👋 Hallo! Ich bin dein KI-Chatbot.
+
+Schreib mir einfach, schick eine Sprachnachricht, ein Foto, ein PDF oder eine Excel/Word-Datei. Ich verarbeite alles zu Text und antworte wie ein normaler Chatbot.
+
+📚 MEHRERE THEMEN GLEICHZEITIG
+Du kannst beliebig viele Themen parallel laufen lassen. Ich erkenne automatisch, ob eine Nachricht zu einem bestehenden Thema gehört oder ein neues eröffnet — du musst dich nicht ab- oder anmelden.
+
+🧠 LANGZEIT-GEDÄCHTNIS
+Fakten, die ich mir für die Zukunft merken soll, schreibst du so:
+  „merke dir: ich heiße Max, ich wohne in Berlin"
+Oder ich lege sie am Ende meiner Antwort als [MERKE: …] ab, wenn etwas Wichtiges auftaucht. /gedaechtnis zeigt alles, /vergiss <Nr> entfernt einen Eintrag.
+
+📎 DATEIEN
+- Foto / Screenshot: per OCR ausgelesen, dann normal verarbeitet
+- PDF: per OCR (Mistral) ausgelesen
+- Excel (.xlsx): direkt ausgelesen
+- Word (.docx): direkt ausgelesen
+- Sprache: per AssemblyAI transkribiert, EU-Endpunkt
+
+🌐 WEB-ZUGRIFF (wenn API-Keys gesetzt sind)
+Ich kann im Internet suchen und Webseiten lesen. Du kriegst jedes Mal eine Bestätigungs-Anfrage mit „Ja/Nein"-Buttons, bevor ich ein Web-Tool benutze — so weißt du immer, was passiert. Ohne deine Bestätigung geht nichts raus.
+
+🛡️ SICHERHEIT (Strikter Modus)
+- Externe Inhalte (Web, PDFs) werden als DATEN behandelt, nicht als Befehle
+- Verdächtige Antworten (versuchter System-Prompt-Leak, API-Keys im Klartext) werden ausgefiltert
+- URL-Blacklist blockt Exfiltration-Dienste
+- Rate-Limit: 30 Nachrichten/Stunde, 200/Tag, 60 Tool-Calls/Tag pro User
+- Jeder Tool-Call wird mit Argumenten protokolliert
+
+BEFEHLE
+/start         diese Anleitung
+/themen        alle deine Themen auflisten
+/thema <Name>  voller Verlauf eines Themas
+/neu <Titel>   explizit ein neues Thema starten
+/umbenennen <alt> <neu>  Thema umbenennen
+/loeschen <Name>  Thema löschen
+/zusammenfassung [Name]  aktuelle KI-Zusammenfassung eines Themas
+/gedaechtnis  alle gemerkten Fakten
+/merke <Text> Fakt manuell hinzufügen
+/vergiss <Nr> Fakt entfernen (Nummer aus /gedaechtnis)
+/komprimieren  Verläufe/Gedächtnis manuell verdichten
+/user          deine Chat-ID und Statistik (inkl. Rate-Limit-Status)
+/protokoll     letzte Ereignisse/Fehler

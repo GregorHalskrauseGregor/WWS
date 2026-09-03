@@ -166,10 +166,10 @@ klare Meldung, welcher Key fehlt.
 | Experte | Bauart | Zuständig für |
 |---|---|---|
 | 📐 Materialaufmaß | Vorgang | Aufmaß erfassen, Aufmaß-PDF erzeugen |
-| 🛒 Bestellung | Vorgang | Bestellung beim Großhändler, mit Bestandsabgleich |
-| 📦 Material-Rückgabe | Vorgang | Wareneingang, Bestand ↑ |
-| 🔧 Material-Entnahme | Vorgang | Verbrauch, Bestand ↓ (mit Bestandsschutz) |
+| 📦 Lager | Vorgang | einlagern, entnehmen, reservieren, freigeben |
 | 🔎 Lagerauskunft | Prompt | Bestandsfragen beantworten (nur lesend) |
+| 📄 Lagerliste | frei | Bestand als aufbereitete Excel schicken |
+| 🛒 Bestellung | Vorgang | Bestellung beim Großhändler, mit Bestandsabgleich |
 | 🔍 Recherche | Prompt | Web-Suche, Anleitungen, Datenblätter |
 | 🧾 Leistungserfassung | Stub | noch nicht gebaut |
 
@@ -269,20 +269,73 @@ festlegen.** Ein Aufmaß, dessen Menge „wahrscheinlich stimmt", ist wertlos.
 
 ---
 
-## Warenwirtschaft
+## Lager
 
-**Datei:** `data/material.xlsx` — eine Zeile pro Artikel:
+Drei Experten teilen sich das Lager, getrennt danach, ob sie etwas **ändern**:
 
-| Kategorie | Bezeichnung | Menge Neu | Menge Gebraucht | Menge Verschmutzt | Einheit |
+| | Ändert Bestand | Wofür |
+|---|---|---|
+| 📦 **Lager** | ja, nach Bestätigung | einlagern, entnehmen, reservieren, freigeben |
+| 🔎 **Lagerauskunft** | nein | "wie viel DN70 haben wir noch?" |
+| 📄 **Lagerliste** | nein | Bestand als Excel-Datei |
 
-- Die drei Mengenspalten summieren sich zum Gesamtbestand
-- Entnahmen werden **nie negativ**; Fehlmengen werden gemeldet
-- Es wird **nie eine Zeile gelöscht**, auch bei Bestand 0
-- Unscharfe Suche: `DN 20` = `DN20` = `DN-20`, Token-Match über Bezeichnungen
-- Fehlt die Datei, gibt es **kein Self-Healing** — das soll auffallen
-- 12 feste SHK-Kategorien (`kategorien.js`)
+### Zwei Dateien, klar getrennt
 
----
+**`data/material.xlsx` — die Arbeitsdatei.** Ein Blatt, feste Spalten, keine
+Formatierung. Sie ist die Buchungsgrundlage und wird nie "schön" gemacht:
+
+| Kategorie | Bezeichnung | Menge Neu | Menge Gebraucht | Menge Verschmutzt | Einheit | Reserviert |
+|---|---|---|---|---|---|---|
+| Pumpen & Antriebe | Grundfos Magna3 | 10 | 0 | 0 | Stk. | `342450413:4` |
+
+**`Lagerbestand_<Datum>.xlsx` — die Ansicht.** Wird auf Anfrage frisch aus der
+Arbeitsdatei erzeugt: Kategorien als Zwischenüberschriften, Summen je Kategorie,
+Stand-Datum. Die interne Reservierungsspalte bleibt draußen — außer du fragst
+ausdrücklich danach ("Lagerliste mit Reservierungen"). So kannst du die Datei
+weitergeben, ohne dass Interna mitwandern.
+
+Die Arbeitsdatei wird **nicht automatisch angelegt**: eine fehlende Lagerdatei
+soll auffallen, nicht stillschweigend durch eine leere ersetzt werden.
+`/lager_anlegen` erzeugt bewusst eine.
+
+### Feste Regeln
+
+- **Bestände fallen nie unter null.** Was fehlt, wird gemeldet, nicht gebucht.
+- **Zeilen werden nie gelöscht.** Eine Position auf 0 bleibt stehen — nur so
+  kann der Bot antworten "davon haben wir gerade keins" statt "kenne ich nicht".
+  In der Ansicht steht sie grau und kursiv.
+- **Eine Zeile je Artikel.** Die drei Zustandsspalten summieren sich zum Bestand.
+  Eine Entnahme greift über die Zustände hinweg: erst der gewünschte, dann die
+  übrigen — sonst würde etwas als "fehlt" gemeldet, das nur in einer anderen
+  Spalte liegt.
+- **Unscharfer Abgleich:** `DN 50` = `DN50` = `DN-50`; Token-Vergleich über die
+  Bezeichnungen. Eine bestehende Position wird erhöht, nicht verdoppelt.
+- **Gebucht wird erst nach Bestätigung.** Ein Bestand, der sich durch eine halb
+  verstandene Nachricht ändert, ist schlimmer als eine Rückfrage.
+
+### Reservierungen
+
+Reserviertes Material ist für **andere gesperrt**. In der Spalte `Reserviert`
+steht je Position, wer wie viel vorgemerkt hat (`Chat-ID:Menge`, mehrere durch
+Semikolon getrennt).
+
+- Reservieren geht nur, soweit noch nichts vorgemerkt ist.
+- Eine Entnahme durch jemand anderen wird **abgelehnt**, soweit sie fremde
+  Vormerkungen angreifen würde — der Rest wird gebucht und die Sperre gemeldet.
+- Die **eigene** Vormerkung wird bei der Entnahme aufgezehrt.
+- `/reservierungen` zeigt, was du selbst vorgemerkt hast.
+
+### Beispiele
+
+```
+"füge 5 Stahl Bögen DN50 dem Lager hinzu"        → 📦 einlagern
+"ich hab 3 Kugelhähne DN20 rausgeholt"           → 📦 entnehmen
+"reservier mir 4 Magna3 für nächste Woche"       → 📦 reservieren
+"wie viele Stahlbögen DN50 haben wir noch?"      → 🔎 nur Auskunft
+"schick mir die Lagerliste als Excel"            → 📄 Datei
+```
+
+12 feste SHK-Kategorien stehen in `kategorien.js`.
 
 ## Gesprächsfäden, Gedächtnis, Kontext
 
@@ -337,6 +390,9 @@ Tool-Aufrufe verteilt, und indirekte Angriffe über die Trainingsdaten selbst.
 | `/gedaechtnis` · `/merke <Text>` · `/vergiss <Nr>` | Langzeit-Fakten |
 | `/komprimieren` | Verläufe und Gedächtnis manuell verdichten |
 | `/aufmass` · `/aufmass_reset` | offene Aufmaße zeigen / verwerfen |
+| `/lagerliste` | Lagerbestand als Excel-Datei |
+| `/reservierungen` | was du selbst vorgemerkt hast |
+| `/lager_anlegen` | leere Lagerdatei erzeugen |
 | `/user` · `/wer_bin_ich` · `/delete-my-data` | Profil und Daten |
 | `/protokoll` | Letzte Ereignisse |
 
@@ -348,7 +404,7 @@ Befehle wie `/aufmass` bringt der Experte selbst mit — der Kern kennt sie nich
 
 ```
 data/                                    (Pfad per WWS_DATA umlenkbar)
-  material.xlsx                          Lagerbestand, betriebsweit
+  material.xlsx                          Arbeitsdatei des Lagers, betriebsweit
   options.json  begruessung.txt  protokoll.txt
   aufnahme_vorlage/                      Muster-PDF fürs Aufmaß
   style_sheet/                           optionale Formatvorlage
@@ -360,6 +416,7 @@ data/                                    (Pfad per WWS_DATA umlenkbar)
       <themaId>.json                     Verlauf + Zusammenfassung
       <themaId>/vorgang.json             offener Vorgang DIESES Fadens
     aufnahmen/   bestellungen/            erzeugte PDFs
+    exporte/                               erzeugte Lagerlisten
 ```
 
 ---
@@ -367,9 +424,15 @@ data/                                    (Pfad per WWS_DATA umlenkbar)
 ## Tests
 
 ```bash
-npm test          # 58 Tests, komplett offline
-npm run test:e2e  # nur der End-zu-End-Durchlauf
+npm test            # 99 Tests, komplett offline
+npm run test:lager  # nur die Lagerlogik
+npm run test:e2e    # nur der End-zu-End-Durchlauf
 ```
+
+`tests/lager.js` prüft die Lagerlogik gegen eine echte Excel-Datei: Bestandsschutz,
+Zeilen bleiben bei 0 stehen, Entnahme über Zustände hinweg, Reservierungen sperren
+fremde Entnahmen, eigene Vormerkung wird aufgezehrt, und der Export enthält die
+Kategorien, aber keine interne Spalte.
 
 `tests/smoke.js` prüft Registry, Vertragsprüfung, JSON-Bergung, Delta-Operationen,
 Lückenerkennung, Router-Validierung, Werkzeuge, Tool-Loop, Dienste und
@@ -379,6 +442,17 @@ vorkommt**.
 `tests/e2e.js` fährt den kompletten Orchestrator mit einem Fake-Modell durch:
 zwei parallele Aufmaße im selben Chat, Korrektur im richtigen Faden, Ergänzung
 ohne Datenverlust, Bestätigung mit echter PDF-Erzeugung, Abbruch.
+
+Die `tests/live_*.js` laufen NICHT mit `npm test`: sie fragen die echte KI und
+kosten Token. Nach einem Modell- oder Anbieterwechsel lohnt sich
+`node tests/live_lager.js` — es prüft, ob der Router die Lager-Experten sauber
+auseinanderhält.
+
+**Zur Routing-Qualität:** Mit MiniMax M2 sitzen typischerweise 6 von 7 Fällen,
+mit wechselndem Ausreißer. Das ist Modell-Varianz, kein Fehler in der Mechanik —
+und der Grund, warum die Router-Rolle einzeln konfigurierbar ist. Ein
+instruktionstreueres Modell auf `AI_PROVIDER_ROUTER` hebt die Trefferquote
+spürbar, ohne die Antwortqualität oder die Kosten des Hauptmodells anzufassen.
 
 `tests/_veraltete_kopien/` enthält den Stand vor dem Umbau — nur zum Nachschlagen,
 nichts davon wird geladen.

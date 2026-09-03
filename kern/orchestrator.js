@@ -192,7 +192,7 @@ async function standardAntwort({ chatId, thema, text, dokInhalt, experte }, dien
     experte ? experte.systemPromptAdd : null
   );
   const messages = kontext.baueHauptMessages(thema, text, dokInhalt);
-  const wz = werkzeuge.fuerExperte(experte, dienste.provider);
+  const wz = werkzeuge.fuerExperte(experte, dienste.provider, { chatId, themaId: thema.id });
   const antwort = await toolloop.laufe({
     chatId, systemPrompt, messages, werkzeuge: wz, provider: dienste.provider, dienste
   });
