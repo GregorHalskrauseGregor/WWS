@@ -294,10 +294,10 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste
   }
 
   // 4) Vollständig — bestätigen lassen, bevor etwas Bleibendes passiert
-  const willAusfuehren = vorschlag.bestaetigt === true ||
-    vorgang.status === speicher.STATUS.WARTET_BESTAETIGUNG && vorschlag.bestaetigt === true;
-
-  if (!willAusfuehren) {
+  // Ausgeführt wird nur auf ausdrückliche Bestätigung — nie allein deshalb,
+  // weil die Daten vollständig sind. Sonst löst eine Nachricht, die zufällig
+  // das letzte Pflichtfeld füllt, gleich das PDF oder die Lagerbuchung aus.
+  if (vorschlag.bestaetigt !== true) {
     vorgang.status = speicher.STATUS.WARTET_BESTAETIGUNG;
     speicher.speichere(chatId, themaId, vorgang);
     return {
