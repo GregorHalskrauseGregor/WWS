@@ -29,6 +29,7 @@ const toolsModul = require('./tools');
 const sicherheit = require('./sicherheit');
 const ratelimit = require('./ratelimit');
 const benutzer = require('./benutzer');
+const router = require('./lib/router');
 const experten = require('./experten');
 const { schreibeEintrag, leseLetzte } = require('./protokoll');
 const { ladeBegruessung } = require('./begruessung');
@@ -127,7 +128,8 @@ function extrahiereMerkeHooks(antwort) {
 }
 
 // Zentrale Verarbeitung: von (bereits vorliegendem) Text bis zur KI-Antwort.
-async function verarbeiteText(chatId, userText, dokInhalt = '') {
+// dokInfo: optional, { name, mimeType, size, pfad } — Metadaten zur angehängten Datei.
+async function verarbeiteText(chatId, userText, dokInhalt = '', dokInfo = null) {
   // 0) Rate-Limit prüfen, BEVOR irgendwas anderes läuft.
   const rl = ratelimit.pruefeNachricht(chatId);
   if (!rl.ok) {
@@ -153,36 +155,49 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
   // 2) Kontext aufbauen
   const gedaechtnisText = gedaechtnis.ladeGedaechtnis(chatId);
 
-  // 2a) Experten-Erkennung. Drei-Stufen-Logik:
-  //   1) Aktive Session hat IMMER Vorrang (Anpassungen, Bestätigungen)
-  //   2) Sonst: KI-basierte Auswahl (semantisch, robust gegen Falsch-Trigger)
-  //   3) Fallback: Schlüsselwort-Match (nur wenn KI nicht will oder nicht verfügbar)
-  let experte = experten.aktiverExperte(chatId);
-
-  // Hilfsfunktion für die KI-Auswahl: holt den Verlauf des jüngsten Themas.
-  async function ladeThemenVerlaufFuerExperten(cId, anzahl) {
-    try {
-      return themen.letzteNachrichten(cId, anzahl);
-    } catch {
-      return [];
+  // 2a) ROUTER-KI — ersetzt die komplette alte Trigger-Logik.
+  //     Die KI bekommt die volle Situation (Text, ggf. Datei-Info, aktive
+  //     Sessions, Experten-Liste, Verlauf) und entscheidet, was passieren soll.
+  //     Statt drei konkurrierende Logiken (Session, Trigger, KI) gibt es
+  //     jetzt EINE zentrale Stelle.
+  // dokInfo für den Router: aus dem Parameter (falls gesetzt)
+  const dokInfoFuerRouter = dokInfo && dokInfo.name ? dokInfo : null;
+  const routing = await router.routingEntscheidung({
+    text: userText,
+    dokInfo: dokInfoFuerRouter,
+    chatId,
+    kontext: {
+      mainChat,
+      letzteNachrichten: ladeThemenVerlaufFuerExperten
     }
+  });
+  schreibeEintrag('Router', `Aktion: ${routing.aktion}, experte: ${routing.experte}, confidence: ${routing.confidence.toFixed(2)}` + (routing.hinweis ? ` (${routing.hinweis})` : ''));
+
+  let experte = null;
+  let routerVorzeitigerReturn = false;
+
+  if (routing.aktion === 'verarbeiten' && routing.experte) {
+    experte = experten.findeExperteMitId(routing.experte);
+  } else if (routing.aktion === 'konversation') {
+    experte = null; // Standard-Chat
+  } else if (routing.aktion === 'nachfragen') {
+    // Bot soll nachfragen — Standard-KI-Flow mit kurzem Hinweis
+    if (routing.hinweis) {
+      await bot.sendMessage(chatId, routing.hinweis);
+    } else {
+      await bot.sendMessage(chatId, 'Kannst du mir noch etwas mehr Kontext geben?');
+    }
+    return;
+  } else if (routing.aktion === 'vorlage_speichern' || routing.aktion === 'style_speichern' || routing.aktion === 'dokument_speichern') {
+    // Datei-bezogene Aktionen werden vom Foto/Dokument-Handler oben in
+    // bot.on('message') erledigt. Hier nur ein Fallback, falls keine Datei da ist.
+    await bot.sendMessage(chatId, routing.hinweis || 'Bitte schick mir die Datei dazu.');
+    return;
   }
 
-  if (!experte) {
-    // KI-basierte Auswahl
-    experte = await experten.waehleExpertenMitKI({
-      text: userText,
-      chatId,
-      kontext: {
-        mainChat,
-        ladeThemenVerlauf: ladeThemenVerlaufFuerExperten
-      }
-    });
-  }
-
-  if (!experte) {
-    // Fallback: Schlüsselwort-Match (Stubs sind bereits gefiltert)
-    experte = experten.findeExperte(userText);
+  // Router-Notfall: bei niedriger Confidence → Standard-Chat ohne Experte
+  if (routing.confidence < 0.6) {
+    experte = null;
   }
 
   const expertenKontext = experte ? experte.systemPromptAdd : null;
@@ -583,7 +598,10 @@ bot.on('message', async (msg) => {
         const buf = Buffer.from(await res.arrayBuffer());
         const text = await transkribiere(buf);
         await bot.sendMessage(chatId, `Verstanden: „${text}"`);
-        await verarbeiteText(chatId, text);
+        await verarbeiteText(chatId, text, '', {
+          name: 'voice-message.ogg',
+          mimeType: 'audio/ogg'
+        });
       });
     } catch (err) {
       console.error(err);
@@ -599,39 +617,68 @@ bot.on('message', async (msg) => {
         const caption = (msg.caption || '').toLowerCase();
         const istUnterschrift = /unterschrift|signature|unterschreiben|unterschreib/.test(caption);
 
-        // 1) Wenn Caption nach Unterschrift klingt -> immer als Unterschrift speichern,
-        //    auch ohne aktive Aufmaß-Session. Der User kann die Unterschrift vorab
-        //    hochladen, BEVOR er die Aufmaß-Daten schickt.
+        // 0) Router-KI: entscheidet, was mit dem Foto passieren soll.
+        //    Bei "vorlage_speichern" wird die Datei direkt als Vorlage abgelegt
+        //    (ohne OCR-Auswertung). Bei "konversation" / "nachfragen" wird
+        //    die KI befragt, was zu tun ist.
+        const bestes = msg.photo[msg.photo.length - 1];
+        const link = await bot.getFileLink(bestes.file_id);
+        const res = await fetch(link);
+        const buf = Buffer.from(await res.arrayBuffer());
+
+        const routerEntscheidung = await router.routingEntscheidung({
+          text: msg.caption || '',
+          dokInfo: {
+            name: `telegram-photo-${Date.now()}.jpg`,
+            mimeType: 'image/jpeg',
+            size: buf.length,
+            pfad: null
+          },
+          chatId,
+          kontext: { mainChat, letzteNachrichten: ladeThemenVerlaufFuerExperten }
+        });
+        schreibeEintrag('Router', `Foto-Aktion: ${routerEntscheidung.aktion} (${routerEntscheidung.experte || '-'})`);
+
+        // Bei Vorlage/StyleSheet/Dokument: direkt speichern ohne OCR
+        if (routerEntscheidung.aktion === 'vorlage_speichern' ||
+            routerEntscheidung.aktion === 'style_speichern' ||
+            routerEntscheidung.aktion === 'dokument_speichern') {
+          await speichereDateiAusRouting(chatId, buf, msg.caption || '', routerEntscheidung);
+          return;
+        }
+
+        // Bei "konversation" oder niedriger Confidence: das Foto einfach ignorieren
+        // und der normalen Konversation überlassen
+        if (routerEntscheidung.aktion !== 'verarbeiten' || routerEntscheidung.confidence < 0.6) {
+          if (routerEntscheidung.hinweis) {
+            await bot.sendMessage(chatId, routerEntscheidung.hinweis);
+          } else {
+            await bot.sendMessage(chatId, 'Ich habe dein Foto erhalten, weiß aber gerade nicht, was ich damit tun soll. Kannst du kurz beschreiben, was du damit möchtest?');
+          }
+          return;
+        }
+
+        // 1) Wenn Caption nach Unterschrift klingt -> immer als Unterschrift speichern
         if (istUnterschrift) {
-          const bestes = msg.photo[msg.photo.length - 1];
-          const link = await bot.getFileLink(bestes.file_id);
-          const res = await fetch(link);
-          const buf = Buffer.from(await res.arrayBuffer());
           const libUnterschrift = require('./lib/unterschrift');
           await libUnterschrift.speichereUnterschrift(chatId, buf);
           schreibeEintrag('Info', `Unterschrift gespeichert (${chatId})`);
-          await bot.sendMessage(chatId, '✍️ Unterschrift gespeichert unter `data/users/' + chatId + '/unterschrift.png`.\n\nSie wird automatisch in künftige Aufmaß-PDFs eingebunden. Wenn du jetzt ein Materialaufmaß erstellen willst, schick einfach deine Aufmaß-Daten.');
+          await bot.sendMessage(chatId, '✍️ Unterschrift gespeichert unter `data/users/' + chatId + '/unterschrift.png`.\n\nSie wird automatisch in künftige Aufmaß-PDFs eingebunden.');
           return;
         }
 
         // 2) Aktive Materialaufmaß-Session? -> als Unterschrift interpretieren
-        //    (auch ohne Caption, da Session-Kontext schon klar ist)
         const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
         if (matExp && typeof matExp.onPhoto === 'function') {
           const sessionDatei = path.join(userVerzeichnisFuerExperten(chatId), 'aufnahme_session.json');
           if (fs.existsSync(sessionDatei)) {
-            const bestes = msg.photo[msg.photo.length - 1];
             const r = await matExp.onPhoto(chatId, bestes.file_id, msg, { bot, schreibeEintrag });
             if (r && r.antwort) await bot.sendMessage(chatId, r.antwort);
             return;
           }
         }
         // 3) Standard: Foto per OCR verarbeiten
-        const bestes = msg.photo[msg.photo.length - 1];
-        const link = await bot.getFileLink(bestes.file_id);
-        const res = await fetch(link);
-        const buf = Buffer.from(await res.arrayBuffer());
-        await importiereUndVerarbeite(buf, 'image/jpeg', chatId, 'Bild');
+        await importiereUndVerarbeite(buf, 'image/jpeg', chatId, 'Bild', 'foto.jpg');
       });
     } catch (err) {
       console.error(err);
@@ -644,7 +691,44 @@ bot.on('message', async (msg) => {
   if (msg.document) {
     try {
       await mitTipptIndikator(chatId, async () => {
-        // Wenn ein Experte onDocument unterstützt und eine aktive Session hat
+        // 0) Router-KI entscheidet, was mit dem Dokument passieren soll
+        const link = await bot.getFileLink(msg.document.file_id);
+        const res = await fetch(link);
+        const buf = Buffer.from(await res.arrayBuffer());
+        const caption = msg.caption || '';
+
+        const routerEntscheidung = await router.routingEntscheidung({
+          text: caption,
+          dokInfo: {
+            name: msg.document.file_name || 'dokument',
+            mimeType: msg.document.mime_type,
+            size: buf.length,
+            pfad: null
+          },
+          chatId,
+          kontext: { mainChat, letzteNachrichten: ladeThemenVerlaufFuerExperten }
+        });
+        schreibeEintrag('Router', `Dokument-Aktion: ${routerEntscheidung.aktion} (${routerEntscheidung.experte || '-'})`);
+
+        // Bei Vorlage/StyleSheet/Dokument: direkt speichern
+        if (routerEntscheidung.aktion === 'vorlage_speichern' ||
+            routerEntscheidung.aktion === 'style_speichern' ||
+            routerEntscheidung.aktion === 'dokument_speichern') {
+          await speichereDateiAusRouting(chatId, buf, msg.document.file_name || 'vorlage', routerEntscheidung);
+          return;
+        }
+
+        // Bei "konversation" oder niedriger Confidence
+        if (routerEntscheidung.aktion !== 'verarbeiten' || routerEntscheidung.confidence < 0.6) {
+          if (routerEntscheidung.hinweis) {
+            await bot.sendMessage(chatId, routerEntscheidung.hinweis);
+          } else {
+            await bot.sendMessage(chatId, 'Ich habe dein Dokument erhalten, weiß aber gerade nicht, was ich damit tun soll. Kannst du kurz beschreiben, was du damit möchtest?');
+          }
+          return;
+        }
+
+        // 1) Aktive Materialaufmaß-Session?
         const matExp = experten.ladeExperten().find((e) => e.id === 'materialaufmass');
         if (matExp && typeof matExp.onDocument === 'function') {
           const sessionDatei = path.join(userVerzeichnisFuerExperten(chatId), 'aufnahme_session.json');
@@ -656,11 +740,8 @@ bot.on('message', async (msg) => {
             }
           }
         }
-        // Standard: Datei verarbeiten
-        const link = await bot.getFileLink(msg.document.file_id);
-        const res = await fetch(link);
-        const buf = Buffer.from(await res.arrayBuffer());
-        await importiereUndVerarbeite(buf, msg.document.mime_type, chatId, 'Datei');
+        // 2) Standard: Datei per OCR/Text-Extraktion verarbeiten
+        await importiereUndVerarbeite(buf, msg.document.mime_type, chatId, 'Datei', msg.document.file_name || 'dokument');
       });
     } catch (err) {
       console.error(err);
@@ -674,8 +755,48 @@ function userVerzeichnisFuerExperten(chatId) {
   return path.join(__dirname, 'data', 'users', String(chatId));
 }
 
+// Speichert eine Datei basierend auf der Router-Entscheidung in den richtigen
+// Ordner (data/aufnahme_vorlage/ oder data/style_sheet/). Wird vom Foto- und
+// Dokument-Handler aufgerufen, BEVOR OCR/Text-Extraktion läuft.
+async function speichereDateiAusRouting(chatId, buffer, originalCaption, routing) {
+  const zielOrdner = routing.aktion === 'style_speichern'
+    ? path.join(__dirname, 'data', 'style_sheet')
+    : routing.aktion === 'dokument_speichern'
+      ? path.join(__dirname, 'data', 'anhaenge', String(chatId))
+      : path.join(__dirname, 'data', 'aufnahme_vorlage');
+
+  fs.mkdirSync(zielOrdner, { recursive: true });
+
+  // Dateinamen bereinigen
+  const safeName = (originalCaption || 'vorlage-' + Date.now())
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .slice(0, 80) || 'vorlage-' + Date.now();
+  const zielPfad = path.join(zielOrdner, safeName);
+
+  fs.writeFileSync(zielPfad, buffer);
+  schreibeEintrag('Info', `Datei gespeichert: ${zielPfad}`);
+
+  const wo = routing.aktion === 'style_speichern' ? 'data/style_sheet/' :
+            routing.aktion === 'dokument_speichern' ? 'data/anhaenge/' + chatId + '/' :
+            'data/aufnahme_vorlage/';
+  await bot.sendMessage(chatId,
+    `📁 Datei gespeichert unter \`${wo}${safeName}\`.\n\n` +
+    (routing.hinweis || 'Sie wird bei künftigen Aufmaß-PDFs automatisch verwendet.')
+  );
+}
+
+// Hilfsfunktion für Router und Experten-Auswahl: holt die letzten Nachrichten
+// des jüngsten Themas eines Users. Wird als Kontext-Provider an die KI durchgereicht.
+async function ladeThemenVerlaufFuerExperten(cId, anzahl) {
+  try {
+    return themen.letzteNachrichten(cId, anzahl);
+  } catch {
+    return [];
+  }
+}
+
 // Foto / PDF / Excel / Word -> Text extrahieren -> normal weiterverarbeiten.
-async function importiereUndVerarbeite(buffer, mimeType, chatId, label) {
+async function importiereUndVerarbeite(buffer, mimeType, chatId, label, dateiName) {
   let text;
   if (mimeType && mimeType.startsWith('image/')) {
     await bot.sendMessage(chatId, `${label} wird per OCR ausgelesen …`);
@@ -704,7 +825,18 @@ async function importiereUndVerarbeite(buffer, mimeType, chatId, label) {
   // Vorverarbeitung geklappt hat.
   const vorschau = text.length > 300 ? text.slice(0, 300) + '…' : text;
   await bot.sendMessage(chatId, `Extrahierter Text (Vorschau):\n${vorschau}`);
-  await verarbeiteText(chatId, 'Bitte lies die beigefügte Datei und beantworte/antworte darauf.', text);
+  // dokInfo für den Router zusammenbauen
+  const dokInfo = {
+    name: dokDateiName,
+    mimeType: mimeType,
+    size: dokBuffer ? dokBuffer.length : null
+  };
+  await verarbeiteText(
+    chatId,
+    'Bitte lies die beigefügte Datei und beantworte/antworte darauf.',
+    text,
+    dokInfo
+  );
 }
 
 // ----------------- Commands -----------------

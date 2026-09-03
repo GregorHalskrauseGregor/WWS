@@ -298,26 +298,42 @@ module.exports = {
 
 Für jeden Stub-Experten gibt es eine `verarbeite`-Funktion, die aktuell nur „noch nicht implementiert" zurückgibt. Sag einfach „ok, jetzt Leistungserfassung" und ich implementiere die Logik — Persistenz, JSON-Schemas, Export, was auch immer gebraucht wird.
 
-## Experten-Auswahl (3-Stufen-Logik)
+## Router-KI (zentral, vor allem anderen)
 
-Damit der Bot den richtigen Experten für eine Nachricht wählt, ohne durch generische Trigger-Wörter fehlgeleitet zu werden (z.B. "brauche Anleitung" darf nicht als Bestellung interpretiert werden), gibt es eine 3-stufige Logik in `bot.js → verarbeiteText()`:
+**Konzept:** Statt drei konkurrierende Logiken (Trigger-Wörter, aktive Session, Experten-Auswahl) gibt es **eine zentrale Router-KI**, die vor allem anderen entscheidet, was mit der Nachricht passieren soll. Damit verschwinden die alten Trigger-Probleme komplett (z.B. „brauche Anleitung" wird nicht mehr in Bestellung fehlgeleitet).
 
-1. **Aktive Session** (höchste Priorität)
-   - Wenn ein Experte eine aktive Aufnahme-Session hat (z.B. Materialaufmaß mit 5 Positionen), wird der User-Input als Anpassung interpretiert, auch wenn die Trigger-Wörter fehlen.
-   - Das ist warum "fertig", "pdf bitte", "ändere Position 2" beim Materialaufmaß funktionieren.
+**Datei:** `lib/router.js`, in `bot.js` als allererster Schritt aufgerufen.
 
-2. **KI-basierte Auswahl** (`experten.waehleExpertenMitKI`)
-   - Die KI bekommt: User-Nachricht, Liste der implementierten Experten mit Beschreibung, aktive Sessions, letzter Themen-Verlauf.
-   - Sie gibt JSON zurück: `{ experte: "id-oder-null", confidence: 0.0-1.0, grund: "..." }`
-   - Confidence >= 0.7: Experte wird aktiviert
-   - Confidence < 0.7 oder null: Standard-Chat
-   - **Stubs werden gefiltert** — die KI sieht sie gar nicht erst.
+**Was die KI bekommt:**
+- User-Nachricht (ggf. transkribiert)
+- Datei-Infos (Name, MIME-Type, Größe, Inhalts-Vorschau bei PDFs)
+- Aktive Sessions aller implementierten Experten
+- Liste der implementierten Experten (Stubs sind gefiltert)
+- Letzte 3-4 Nachrichten des aktuellen Themas
 
-3. **Schlüsselwort-Fallback** (`experten.findeExperte`)
-   - Nur wenn die KI nicht will oder nicht verfügbar ist.
-   - Stubs sind hier auch gefiltert.
+**Mögliche Aktionen** (JSON-Antwort):
+| Aktion | Was passiert |
+|---|---|
+| `verarbeiten` | Experte wird aktiviert und bekommt die Nachricht |
+| `vorlage_speichern` | Datei wird unter `data/aufnahme_vorlage/` abgelegt (ohne OCR) |
+| `style_speichern` | Datei wird unter `data/style_sheet/` abgelegt |
+| `dokument_speichern` | Datei ist nur ein Anhang, wird unter `data/anhaenge/<chatId>/` abgelegt |
+| `konversation` | Standard-Chat, kein Experte nötig |
+| `nachfragen` | Anfrage unklar, Bot fragt kurz nach |
 
-**Wichtige Designentscheidung:** Die Stubs (Leistungserfassung, Bestellung) werden geladen und in `/experten` mit 🚧-Status angezeigt, aber **nicht** der KI zur Auswahl angeboten. Solange sie nicht implementiert sind, können sie nicht versehentlich aktiviert werden.
+**Confidence-Schwelle 0.6:** Darunter → Standard-Chat, keine Aktion. Stubs werden der KI gar nicht erst angeboten.
+
+**Ausnahmen:**
+- Voice-Nachrichten werden IMMER zuerst transkribiert (kein Router davor)
+- Aktive Materialaufmaß-Session: Anpassungen werden direkt akzeptiert
+
+**Was der Router löst (alte Probleme):**
+- „brauche Anleitung" → nicht mehr Bestellung, sondern Recherche
+- „höchste Leistung" → nicht mehr Rechnung, sondern Konversation (technische Eigenschaft)
+- „ich sende gleich X" → Ankündigung, keine Aktion
+- Leere Aufmaß-Vorlage (nur Felder, keine Daten) → als Vorlage speichern, nicht parsen
+
+## Sicherheit (Strikter Modus)
 
 ## Sicherheit (Strikter Modus)
 
