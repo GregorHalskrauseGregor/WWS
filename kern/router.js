@@ -14,6 +14,9 @@
 //   - bei leerer Antwort ein zweiter Versuch mit einem kurzen Prompt
 
 const fs = require('fs');
+
+// Unter diesem Anteil gefuellter Formularfelder gilt ein PDF als leere Vorlage.
+const ANTEIL_VORLAGE = 0.10;
 const { SCHWELLEN } = require('../config');
 const { extrahiere } = require('./json');
 const experten = require('../experten');
@@ -69,7 +72,19 @@ function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confid
 
 // ─────────────────────────────────────────────────────────────────── Prompts
 
-function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock }) {
+function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock, hatDatei }) {
+  // Ohne angehaengte Datei duerfen die Datei-Aktionen gar nicht erst zur Wahl
+  // stehen. Sonst antwortet der Bot auf eine reine Sprachnachricht mit
+  // "Schick mir die Datei dazu" — und der gesprochene Inhalt ist verloren.
+  const aktionen = hatDatei
+    ? 'verarbeiten | konversation | nachfragen | vorlage_speichern | style_speichern | dokument_speichern'
+    : 'verarbeiten | konversation | nachfragen';
+  const dateiRegeln = hatDatei
+    ? `\n- Zur Datei: ein LEERES Formular (nur Feldnamen, keine Werte) -> vorlage_speichern.
+  Ein Lieferschein oder eine Tabelle MIT echten Daten -> verarbeiten.
+  Beachte den Hinweis zur Datei unten, falls vorhanden.`
+    : '\n- Es ist KEINE Datei angehaengt. Die Datei-Aktionen stehen nicht zur Wahl.';
+
   return `Du bist der Router eines Handwerker-Bots (SHK). Entscheide für die Nachricht ZWEI Dinge:
 (1) zu welchem Gesprächsfaden sie gehört, (2) was damit passieren soll.
 
@@ -83,7 +98,7 @@ EXPERTEN (nur diese sind wählbar):
 ${expertenBlock}
 ${verlaufBlock}
 AKTIONEN:
-verarbeiten | konversation | nachfragen | vorlage_speichern | style_speichern | dokument_speichern
+${aktionen}
 
 THEMENWAHL:
 - Passt die Nachricht zu einem bestehenden Thema, gib dessen ID exakt zurück.
@@ -99,7 +114,7 @@ AKTIONSWAHL:
   "höchste Leistung" = technische Eigenschaft, "schick dir gleich was" = konversation.
 - Läuft im gewählten Thema ein Vorgang, ist die Aktion fast immer "verarbeiten"
   mit dem Experten dieses Vorgangs.
-- Bei einer Datei: leeres Formular -> vorlage_speichern, Lieferschein mit Daten -> verarbeiten.
+${dateiRegeln}
 - Im Zweifel "konversation" mit niedriger confidence.
 
 FORMAT (genau so, eine Zeile):
@@ -142,24 +157,66 @@ function baueVerlaufBlock(chatId) {
   return `\nLETZTE NACHRICHTEN (jüngstes Thema):\n${text}\n`;
 }
 
+// Vorschau + ein deterministisches Urteil, ob die Datei eine LEERE VORLAGE ist.
+// Das muss die KI nicht raten: ein PDF mit vielen Formularfeldern und kaum
+// Textinhalt ist ein Blankoformular, kein ausgefuellter Lieferschein.
 async function dateiVorschau(dokInfo) {
-  if (!dokInfo || !dokInfo.pfad) return null;
+  const leer = { text: null, hinweis: null, formular: null };
+  if (!dokInfo || !dokInfo.pfad) return leer;
   try {
-    if (fs.statSync(dokInfo.pfad).size > SCHWELLEN.VORSCHAU_MAX_BYTES) return null;
-    const buffer = fs.readFileSync(dokInfo.pfad);
+    const groesse = fs.statSync(dokInfo.pfad).size;
     const istPdf = dokInfo.mimeType === 'application/pdf' ||
       (dokInfo.name && dokInfo.name.toLowerCase().endsWith('.pdf'));
+
     if (istPdf) {
-      try {
-        const daten = await require('pdf-parse')(buffer);
-        return (daten.text || '').slice(0, SCHWELLEN.VORSCHAU_ZEICHEN);
-      } catch { return null; }
+      if (groesse > SCHWELLEN.FORMULAR_MAX_BYTES) return leer;
+      // Formularfelder zuerst: zuverlaessigster Befund, ohne OCR und ohne
+      // native Abhaengigkeiten — und unabhaengig von der Textvorschau-Grenze.
+      let felder = null;
+      try { felder = await require('../lib/pdf_filler').leseFeldWerte(dokInfo.pfad); }
+      catch { /* kein AcroForm-PDF */ }
+
+      // Textextraktion nur, wenn die Felder nichts hergeben. pdf-parse braucht
+      // native Canvas-Bindings und faellt in manchen Umgebungen ganz aus.
+      let text = '';
+      const brauchtText = !felder || felder.ausgefuellt.length === 0;
+      if (brauchtText && groesse <= SCHWELLEN.VORSCHAU_MAX_BYTES) {
+        try { text = (await require('pdf-parse')(fs.readFileSync(dokInfo.pfad))).text || ''; }
+        catch { /* nicht ueberall verfuegbar */ }
+      }
+
+      let hinweis = null;
+      let vorschau = text.slice(0, SCHWELLEN.VORSCHAU_ZEICHEN) || null;
+
+      if (felder && felder.gesamt > 5) {
+        const anzahl = felder.ausgefuellt.length;
+        // Verhaeltnis statt Null-Pruefung: in einer Vorlage stehen oft ein paar
+        // Reste (Seitenzahl, ein Testeintrag). Ein echtes Aufmass fuellt dagegen
+        // Dutzende Positionsfelder.
+        felder.istVorlage = anzahl / felder.gesamt < ANTEIL_VORLAGE;
+        if (felder.istVorlage) {
+          hinweis = `${felder.gesamt} ausfuellbare Formularfelder, davon nur ${anzahl} ` +
+            `mit Inhalt. Ein ausgefuellter Beleg haette Dutzende gefuellte Felder — ` +
+            `das hier ist ein Blankoformular, also eine VORLAGE.`;
+        } else {
+          hinweis = `${felder.gesamt} Formularfelder, davon ${anzahl} ausgefuellt — ` +
+            `also ein ausgefuelltes Formular mit echten Daten.`;
+          vorschau = felder.ausgefuellt.slice(0, 25)
+            .map((f) => `${f.name}: ${f.wert}`).join('\n').slice(0, SCHWELLEN.VORSCHAU_ZEICHEN);
+        }
+      }
+      return { text: vorschau, hinweis, formular: felder };
     }
-    if (dokInfo.mimeType && dokInfo.mimeType.startsWith('text/')) {
-      return buffer.toString('utf-8').slice(0, SCHWELLEN.VORSCHAU_ZEICHEN);
+
+    if (dokInfo.mimeType && dokInfo.mimeType.startsWith('text/') &&
+        groesse <= SCHWELLEN.VORSCHAU_MAX_BYTES) {
+      return {
+        text: fs.readFileSync(dokInfo.pfad, 'utf-8').slice(0, SCHWELLEN.VORSCHAU_ZEICHEN),
+        hinweis: null, formular: null
+      };
     }
-    return null;
-  } catch { return null; }
+    return leer;
+  } catch { return leer; }
 }
 
 // ────────────────────────────────────────────────────────────────── Entscheidung
@@ -175,6 +232,7 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
     return ergebnis({ themaId: rueckfall, themaName: leiteThemaNamenAb(text), hinweis: 'leere Eingabe' });
   }
 
+  const hatDatei = !!dokInfo;
   const liste = experten.implementierteExperten();
   const themenBlock = baueThemenBlock(chatId);
   const expertenBlock = liste.length
@@ -183,12 +241,16 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
 
   const teile = [];
   if (text) teile.push('NACHRICHT:\n' + text);
+  let befund = null;
   if (dokInfo) {
-    const vorschau = await dateiVorschau(dokInfo);
+    const analyse = await dateiVorschau(dokInfo);
+    befund = analyse.formular;
+    const { text: vorschau, hinweis: dateiHinweis } = analyse;
     teile.push('DATEI:\n' +
       `- Name: ${dokInfo.name || '(unbekannt)'}\n` +
       `- Typ: ${dokInfo.mimeType || '(unbekannt)'}\n` +
       `- Größe: ${dokInfo.size != null ? dokInfo.size + ' Bytes' : '(unbekannt)'}` +
+      (dateiHinweis ? `\n- BEFUND: ${dateiHinweis}` : '') +
       (vorschau ? `\n- Inhalt (Anfang):\n${vorschau}` : ''));
   }
   const eingabe = teile.join('\n\n');
@@ -196,7 +258,8 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
   // Erster Versuch, bei leerem Ergebnis ein zweiter mit kurzem Prompt.
   let parsed = null;
   try {
-    parsed = extrahiere(await chat(baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock: baueVerlaufBlock(chatId) }), eingabe));
+    parsed = extrahiere(await chat(
+      baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock: baueVerlaufBlock(chatId), hatDatei }), eingabe));
     if (!parsed) {
       melde('Erste Antwort ohne JSON — zweiter Versuch mit Kurz-Prompt.');
       parsed = extrahiere(await chat(baueKurzPrompt({ themenBlock, expertenBlock: liste.map((e) => e.id).join(', ') }), eingabe));
@@ -234,6 +297,35 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
   }
   parsed.aktion = aktion;
 
+  // Sicherheitsnetz: eine Datei-Aktion ohne Datei ist immer ein Modellfehler.
+  // Statt den Nutzer nach einer Datei zu fragen, die er nie erwaehnt hat,
+  // behandeln wir die Nachricht normal weiter.
+  const dateiAktionen = ['vorlage_speichern', 'style_speichern', 'dokument_speichern'];
+
+  // Hier gibt es eine richtige Antwort, also entscheidet der Code: ein
+  // Blankoformular ohne begleitende Angaben ist eine Vorlage. Das Modell hat in
+  // der Praxis stattdessen den Aufmass-Experten gewaehlt und damit ein leeres
+  // Aufmass gestartet. Schreibt der Nutzer etwas Substanzielles dazu, bleibt
+  // die Entscheidung beim Modell.
+  const kaumText = String(text || '').trim().length < 25;
+  if (hatDatei && befund && befund.istVorlage && kaumText && parsed.aktion !== 'style_speichern') {
+    if (parsed.aktion !== 'vorlage_speichern') {
+      melde(`Blankoformular erkannt (${befund.ausgefuellt.length}/${befund.gesamt} Felder gefuellt) ` +
+        `-> als Vorlage abgelegt statt "${parsed.aktion}"`);
+    }
+    return ergebnis({
+      themaId, themaName: parsed.themaName || leiteThemaNamenAb(text),
+      aktion: 'vorlage_speichern', dokTyp: 'vorlage',
+      hinweis: parsed.hinweis, confidence: Math.max(confidence, 0.9)
+    });
+  }
+
+  if (!hatDatei && dateiAktionen.includes(parsed.aktion)) {
+    const treffer = findeExperteNachsichtig(liste, parsed.experte);
+    parsed.aktion = treffer ? 'verarbeiten' : 'konversation';
+    melde(`Datei-Aktion ohne Datei verworfen -> ${parsed.aktion}`);
+  }
+
   if (!erlaubt.includes(parsed.aktion)) {
     return ergebnis({ themaId, themaName: parsed.themaName || leiteThemaNamenAb(text), hinweis: 'unbekannte Aktion: ' + parsed.aktion, confidence });
   }
@@ -262,4 +354,4 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
   });
 }
 
-module.exports = { entscheide, leiteThemaNamenAb, juengstesThemaId };
+module.exports = { entscheide, leiteThemaNamenAb, juengstesThemaId, dateiVorschau };

@@ -41,9 +41,13 @@ const SCHWELLEN = {
   ROUTER_VERLAUF_ANZAHL: 4,
   ROUTER_VERLAUF_MAX_ZEICHEN: 600,
 
-  // Datei-Vorschau für den Router.
+  // Datei-Vorschau für den Router. Die Grenze gilt fürs Einlesen des Textes;
+  // die Formularfeld-Analyse ist billig und laeuft bis zur Telegram-Obergrenze.
+  // (500 KB waren zu knapp: schon eine normale Formular-PDF hat ~900 KB, damit
+  // wurde sie ungeprueft durchgereicht und als leeres Aufmass verarbeitet.)
   VORSCHAU_ZEICHEN: 500,
-  VORSCHAU_MAX_BYTES: 500_000
+  VORSCHAU_MAX_BYTES: 4_000_000,
+  FORMULAR_MAX_BYTES: 20_000_000
 };
 
 // ------------------------------------------------------------------ Limits

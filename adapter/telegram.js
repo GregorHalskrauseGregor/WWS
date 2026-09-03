@@ -240,7 +240,20 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
           const buffer = await ladeDatei(d.file_id);
           const name = d.file_name || `datei-${Date.now()}`;
           const mime = d.mime_type || '';
-          const inhalt = await dateiZuText(buffer, mime, name);
+          let inhalt = '';
+          try {
+            inhalt = await dateiZuText(buffer, mime, name);
+          } catch (err) {
+            inhalt = '';
+          }
+          // Stillschweigend mit leerem Inhalt weiterzumachen ist die schlechteste
+          // Variante: der Experte findet nichts und fragt alles noch einmal ab,
+          // ohne dass jemand weiss, warum.
+          if (!inhalt.trim() && !(msg.caption || '').trim()) {
+            await sendeText(chatId, `⚠️ Ich konnte aus \`${name}\` keinen Text lesen. ` +
+              `Falls es ein Scan oder Foto ist, fehlt dafür der OCR-Zugang (MISTRAL_API_KEY). ` +
+              `Du kannst mir den Inhalt auch einfach schreiben oder diktieren.`);
+          }
 
           // Der Router braucht ggf. eine Inhalts-Vorschau aus der echten Datei.
           const temp = path.join(require('os').tmpdir(), `wws-${Date.now()}-${name.replace(/[^\w.-]/g, '_')}`);
@@ -265,6 +278,24 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     const n = String(name).toLowerCase();
     try {
       if (mime === 'application/pdf' || n.endsWith('.pdf')) {
+        // Reihenfolge nach Zuverlaessigkeit und Kosten:
+        // 1) AcroForm-Feldwerte — exakte Daten, kein Dienst noetig
+        // 2) eingebetteter Text
+        // 3) OCR (kostet, braucht Key, nur fuer Scans und Fotos sinnvoll)
+        const tmp = path.join(require('os').tmpdir(), `wws-pdf-${Date.now()}.pdf`);
+        try {
+          fs.writeFileSync(tmp, buffer);
+          const felder = await require('../lib/pdf_filler').leseFeldWerte(tmp);
+          if (felder.ausgefuellt.length > 0) {
+            return felder.ausgefuellt.map((f) => `${f.name}: ${f.wert}`).join('\n');
+          }
+        } catch { /* kein Formular-PDF */ }
+        finally { try { fs.unlinkSync(tmp); } catch { /* egal */ } }
+
+        try {
+          const text = (await require('pdf-parse')(buffer)).text || '';
+          if (text.trim().length > 80) return text;
+        } catch { /* dann eben OCR */ }
         return await fachdienste.ocr(buffer, 'application/pdf');
       }
       if (n.endsWith('.xlsx') || n.endsWith('.xls')) return await excelZuText(buffer);

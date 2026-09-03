@@ -363,6 +363,63 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
     });
   } finally { themenModul.ladeIndex = echtLadeIndex; }
 
+  console.log('\n── Regression: Datei-Aktionen ohne Datei ──');
+  // Echter Vorfall: eine Sprachnachricht mit einer kompletten Materialliste
+  // wurde mit "Schick mir die Datei dazu" beantwortet — der Inhalt war weg.
+  themenModul.ladeIndex = () => fakeThemen;
+  try {
+    await pruefeAsync('vorlage_speichern ohne Datei -> Experte statt Sackgasse', async () => {
+      const r = await router.entscheide({ text: 'Aufmaß 12m Kupferrohr', chatId: 1,
+        chat: async () => '{"thema":"neu","aktion":"vorlage_speichern","experte":"materialaufmass","confidence":1.0}' });
+      assert.equal(r.aktion, 'verarbeiten', 'blieb bei der Datei-Aktion');
+      assert.equal(r.experte, 'materialaufmass');
+    });
+    await pruefeAsync('vorlage_speichern ohne Datei und ohne Experte -> Konversation', async () => {
+      const r = await router.entscheide({ text: 'hallo', chatId: 1,
+        chat: async () => '{"thema":"neu","aktion":"dokument_speichern","confidence":1.0}' });
+      assert.equal(r.aktion, 'konversation');
+    });
+    await pruefeAsync('mit Datei bleibt die Datei-Aktion erhalten', async () => {
+      const r = await router.entscheide({ text: '', chatId: 1,
+        dokInfo: { name: 'formular.pdf', mimeType: 'application/pdf', size: 1000, pfad: null },
+        chat: async () => '{"thema":"neu","aktion":"vorlage_speichern","confidence":0.9}' });
+      assert.equal(r.aktion, 'vorlage_speichern');
+    });
+  } finally { themenModul.ladeIndex = echtLadeIndex; }
+
+  console.log('\n── Regression: Blankoformular wird als Vorlage erkannt ──');
+  const vorlagePfad = path.join(__dirname, '..', 'data', 'aufnahme_vorlage', 'Aufmass_Zienert_ausfuellbar.pdf');
+  if (fs.existsSync(vorlagePfad)) {
+    await pruefeAsync('231 Felder, 3 gefuellt -> Vorlage (deterministisch)', async () => {
+      const a = await router.dateiVorschau({ name: 'Aufmass.pdf', mimeType: 'application/pdf', pfad: vorlagePfad });
+      assert(a.formular, 'Formular gar nicht analysiert (Groessengrenze?)');
+      assert.equal(a.formular.istVorlage, true, `${a.formular.ausgefuellt.length}/${a.formular.gesamt} gefuellt`);
+      assert.match(a.hinweis, /VORLAGE/);
+    });
+    await pruefeAsync('Modell will verarbeiten -> Code korrigiert auf Vorlage', async () => {
+      themenModul.ladeIndex = () => fakeThemen;
+      try {
+        const r = await router.entscheide({ text: '', chatId: 1,
+          dokInfo: { name: 'Aufmass.pdf', mimeType: 'application/pdf', size: 922836, pfad: vorlagePfad },
+          chat: async () => '{"thema":"neu","aktion":"verarbeiten","experte":"materialaufmass","confidence":0.95}' });
+        assert.equal(r.aktion, 'vorlage_speichern', 'leeres Aufmass wurde gestartet');
+      } finally { themenModul.ladeIndex = echtLadeIndex; }
+    });
+    await pruefeAsync('mit begleitender Nachricht entscheidet das Modell', async () => {
+      themenModul.ladeIndex = () => fakeThemen;
+      try {
+        const r = await router.entscheide({
+          text: 'hier das ausgefüllte Aufmaß von der Baustelle Müller, bitte übernehmen',
+          chatId: 1,
+          dokInfo: { name: 'Aufmass.pdf', mimeType: 'application/pdf', size: 922836, pfad: vorlagePfad },
+          chat: async () => '{"thema":"neu","aktion":"verarbeiten","experte":"materialaufmass","confidence":0.95}' });
+        assert.equal(r.aktion, 'verarbeiten', 'Code hat den Nutzer uebergangen');
+      } finally { themenModul.ladeIndex = echtLadeIndex; }
+    });
+  } else {
+    console.log('  ⚠️  übersprungen (keine Vorlagen-PDF vorhanden)');
+  }
+
   console.log('\n── Regression: MiniMax-Fehler in HTTP-200-Antwort ──');
   // MiniMax meldet Fehler im Rumpf, nicht im Status. Vorher kam dabei still
   // ein leerer String zurueck, den der Aufrufer fuer eine Antwort hielt.
