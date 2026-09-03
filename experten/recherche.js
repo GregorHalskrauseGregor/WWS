@@ -1,46 +1,30 @@
-// Recherche-Experte: Web-Suche, Fakten-Recherche, Quellen prüfen.
-// Nutzt die globalen Web-Tools (web_search, web_fetch) wenn die jeweiligen
-// API-Keys gesetzt sind. Fällt auf das Trainingswissen der KI zurück, wenn
-// keine Keys da sind.
+// 🔍 Recherche — Prompt-Experte.
+//
+// Braucht keine eigene Logik: er schärft nur den System-Prompt und lässt den
+// normalen Chat-Flow mit Tool-Loop laufen. Vorher stand dafür ein Marker-Objekt
+// (_delegate:'standard') im Rückgabewert, das bot.js kennen musste.
 
 module.exports = {
   id: 'recherche',
   name: 'Recherche',
   emoji: '🔍',
-  description: 'Sucht im Internet nach Fakten, Nachrichten, Anleitungen, Produkten, Wetter, Adressen, Personen — alles, wofür du aktuelle Daten brauchst.',
-  triggers: [
-    'recherche', 'recherchiere', 'recherchier',
-    'such nach', 'suche nach', 'such mal', 'finde', 'find mal', 'find raus',
-    'was ist', 'was sind', 'wer ist', 'wer war', 'wann ist', 'wann war',
-    'wo ist', 'wo finde', 'wo gibt', 'wie funktioniert',
-    'internet', 'web', 'online', 'google', 'aktuell', 'aktuelles',
-    'wetter', 'nachrichten', 'news', 'preis', 'kosten', 'test', 'bewertung',
-    'recherchiere', 'gibt es', 'gibts'
-  ],
-  systemPromptAdd: `RECHERCHE-MODUS AKTIV.
-Du hast Zugriff auf Web-Tools (web_search, web_fetch). Nutze sie aktiv, wenn der Nutzer nach aktuellen Informationen fragt, die nicht in deinem Trainingswissen sind oder sich ändern können (Wetter, Nachrichten, Preise, Personen-Status, neue Produkte, technische Spezifikationen, Bedienungsanleitungen).
+  beschreibung: 'Sucht im Internet nach Fakten, Anleitungen, Produkten, Preisen und technischen Daten und nennt die Quellen.',
 
-Regeln:
-- Bevorzuge web_search für offene Fragen (Was ist X? Wer ist Y?)
-- Nutze web_fetch, wenn du eine konkrete URL laden sollst
-- Wenn KEIN Web-Tool verfügbar ist, sag das ehrlich und antworte aus deinem Trainingswissen
-- Nenne Quellen (URLs) in deiner Antwort, damit der Nutzer nachprüfen kann
-- Halte Antworten prägnant — 2-4 Sätze + ggf. die wichtigsten Quellen`,
-  tools: null, // null = Standard-Tools (web_search, web_fetch falls Keys gesetzt)
+  zustaendigWenn:
+    'Der Nutzer will etwas WISSEN, das aktuelle oder nachschlagbare Information ist: ' +
+    'eine Anleitung, ein Datenblatt, ein Preis, eine technische Angabe, eine Adresse, ' +
+    'eine Nachricht, oder er nennt eine konkrete URL zum Nachlesen. ' +
+    'Auch wenn er nur "brauche eine Anleitung für X" sagt.',
+
   implementiert: true,
 
-  verarbeite: async (input, kontext) => {
-    // Der Recherche-Experte delegiert an den normalen Haupt-KI-Flow mit
-    // Tool-Loop. Der Bot ruft mainChatMitTools auf, das Tool-Confirmation-
-    // Handling, das Output-Filter und das Themen-Anhängen läuft ganz normal.
-    //
-    // Wir geben dem Bot eine "Anweisung" zurück, dass er den Standard-Flow
-    // nutzen soll. Das geschieht über ein Marker-Objekt, das bot.js erkennt.
+  systemPromptAdd: `RECHERCHE-MODUS AKTIV.
+Du hast Zugriff auf Web-Tools (web_search, web_fetch). Nutze sie, wenn der Nutzer nach Informationen fragt, die sich ändern können oder nicht sicher in deinem Wissen stehen: Preise, Datenblätter, Anleitungen, Normen, Nachrichten, Produkte.
 
-    return {
-      _delegate: 'standard', // Signal an bot.js: nutze den normalen Tool-Loop
-      antwort: null,         // wird vom Standard-Flow gefüllt
-      merkeHook: null
-    };
-  }
+Regeln:
+- web_search für offene Fragen, web_fetch für eine konkrete URL.
+- Nur EINE Suche pro Anfrage, danach die Antwort formulieren.
+- Ist kein Web-Tool verfügbar, sag das ehrlich und antworte aus deinem Wissen.
+- Nenne die Quellen-URLs, damit der Nutzer nachprüfen kann.
+- Prägnant bleiben: 2-4 Sätze plus Quellen.`
 };
