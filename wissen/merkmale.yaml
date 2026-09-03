@@ -1,0 +1,63 @@
+# Merkmale: wie streng wird nachgefragt, und wo gilt ein Merkmal überhaupt?
+#
+# DREI STUFEN, damit "nicht optional" nicht bedeutet "blockiert alles":
+#   pflicht   ohne diese Angabe wird nicht gebucht. Der Bot fragt und wartet.
+#   erwartet  wird einmal gefragt, darf aber übersprungen werden ("weiß ich
+#             nicht"). Hier landen Merkmale, die der Bot dazugelernt hat.
+#   optional  wird nur übernommen, wenn sie von selbst genannt wird.
+#
+# GLOBALE MERKMALE gelten für ALLE Artikelarten, außer für die unter
+# "gilt_nicht_fuer" genannten. So muss man Menge, Dimension und Material nicht
+# in jeder Klasse einzeln wiederholen — und eine neue Artikelart erbt sie
+# automatisch, statt sie zu vergessen.
+
+global:
+  menge:
+    stufe: pflicht
+    beschreibung: "Wie viel."
+    frage: "Wie viel?"
+    gilt_nicht_fuer: []          # ohne Menge gibt es keine Buchung
+
+  dimension:
+    stufe: pflicht
+    beschreibung: "Nennweite, Zoll oder Außendurchmesser."
+    frage: "Welche Dimension? (z. B. DN20, 3/4 Zoll oder 22 mm)"
+    gilt_nicht_fuer: [pumpe, sonstiges]
+    # Bei manchen Arten heißt die Dimension anders — dann wird nach dem
+    # klasseneigenen Merkmal gefragt statt nach "dimension".
+    ersatz:
+      pumpe: baulaenge
+
+  material:
+    stufe: pflicht
+    beschreibung: "Werkstoff — Kupfer, Stahl, Rotguss, Edelstahl, Verbund."
+    frage: "Aus welchem Material — Kupfer, Stahl (schwarz), verzinkt, Edelstahl, Rotguss oder Verbundrohr?"
+    gilt_nicht_fuer: [pumpe, sonstiges]
+
+  zulassung:
+    stufe: erwartet
+    beschreibung: "Heizung, Trinkwasser oder Gas."
+    frage: "Für welchen Bereich zugelassen — Heizung, Trinkwasser oder Gas?"
+    # Nur dort Pflicht, wo eine Verwechslung sicherheitsrelevant ist.
+    pflicht_fuer: [kugelhahn]
+    gilt_nicht_fuer: [befestigung, werkzeug, sonstiges]
+
+  marke:
+    stufe: optional
+    beschreibung: "Hersteller."
+    frage: "Von welchem Hersteller?"
+    gilt_nicht_fuer: []
+
+  artnr:
+    stufe: optional
+    beschreibung: "Artikelnummer des Herstellers."
+    frage: "Wie lautet die Artikelnummer?"
+    gilt_nicht_fuer: []
+
+# Wenn eine unbekannte Artikelart auftaucht, kann der Bot nicht wissen, ob
+# Dimension und Material dort sinnvoll sind. Dann schlägt er eine Einordnung
+# vor und fragt einmal nach — statt stur zu fragen oder stillschweigend zu
+# überspringen.
+unbekannte_art:
+  vorgehen: vorschlagen_und_fragen
+  frage: 'Ich kenne „{art}“ noch nicht. Gibt es dafür eine Dimension und ein Material, nach denen ich künftig fragen soll?'

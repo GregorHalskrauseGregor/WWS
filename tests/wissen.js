@@ -20,11 +20,17 @@ pruefe('Artikelklassen vollständig deklariert', () => {
   for (const name of wissen.alleKlassen()) {
     const k = wissen.klasse(name);
     assert(Array.isArray(k.identitaet), `${name}: identitaet fehlt`);
-    assert(Array.isArray(k.pflicht), `${name}: pflicht fehlt`);
-    for (const feld of k.pflicht) {
-      if (name === 'sonstiges') continue;
-      assert(k.frage && k.frage[feld] || k.identitaet.includes(feld) || k.optional,
-        `${name}: Pflichtfeld ${feld} ohne Rückfrage`);
+    assert(k.warengruppe, `${name}: warengruppe fehlt`);
+    assert(wissen.warengruppe(k.warengruppe), `${name}: warengruppe "${k.warengruppe}" gibt es im Baum nicht`);
+  }
+});
+pruefe('jede Pflichtangabe hat eine Rückfrage', () => {
+  for (const name of wissen.alleKlassen()) {
+    if (name === 'sonstiges') continue;
+    const r = wissen.fehlendePflicht(name, {});
+    for (const feld of [...r.fehlt, ...r.offen]) {
+      assert(r.fragen[feld] && r.fragen[feld].length > 10,
+        `${name}: "${feld}" wird erfragt, aber ohne brauchbaren Text`);
     }
   }
 });
@@ -147,10 +153,102 @@ pruefe('Rohr ohne Länge ist unvollständig', () => {
   assert.deepEqual(r.fehlt, ['laenge']);
   assert.match(r.fragen.laenge, /lang/i);
 });
-pruefe('Kugelhahn ohne Zulassung wird erfragt', () => {
+pruefe('Kugelhahn ohne Zulassung blockiert', () => {
   const r = wissen.fehlendePflicht('kugelhahn', { dimension: 'DN15' });
-  assert(r.fehlt.includes('zulassung'));
+  assert(r.fehlt.includes('zulassung'), 'Zulassung nicht als Pflicht erkannt');
   assert.match(r.fragen.zulassung, /Heizung|Trinkwasser|Gas/);
+});
+pruefe('Pressbogen ohne Kontur blockiert (Sicherheit)', () => {
+  const r = wissen.fehlendePflicht('bogen', { dimension: 22, material: 'kupfer', verbindung: 'pressen' });
+  assert(r.fehlt.includes('kontur'), 'Kontur wird nur erfragt, nicht verlangt');
+});
+pruefe('erwartet blockiert nicht', () => {
+  const r = wissen.fehlendePflicht('rohr', { material: 'stahl', dimension: 'DN50', laenge: 6 });
+  assert.deepEqual(r.fehlt, [], 'blockiert trotz vollständiger Pflichtangaben');
+  assert(r.offen.includes('wandstaerke'), 'erwartetes Merkmal fehlt in offen');
+});
+
+console.log('\n── Warengruppen-Baum ──');
+pruefe('zwölf Oberkategorien, aus dem Baum abgeleitet', () => {
+  assert.equal(wissen.oberkategorien().length, 12);
+  const { KATEGORIEN } = require('../kategorien');
+  assert.deepEqual(KATEGORIEN, wissen.oberkategorien(), 'kategorien.js weicht vom Baum ab');
+});
+pruefe('Abfrage auf jeder Ebene', () => {
+  assert.deepEqual(wissen.klassenUnter('armaturen'), ['kugelhahn']);
+  const fittinge = wissen.klassenUnter('fittinge').sort();
+  assert.deepEqual(fittinge, ['bogen', 'muffe', 'reduktion', 't_stueck']);
+  assert.deepEqual(wissen.klassenUnter('fittinge.verbinder'), ['muffe']);
+});
+pruefe('Pfad einer Artikelart', () => {
+  assert.deepEqual(wissen.pfadVon('kugelhahn'), ['Armaturen & Ventile', 'Absperrarmaturen']);
+  assert.equal(wissen.kategorieVon('kugelhahn'), 'Armaturen & Ventile');
+});
+pruefe('Gewerk ist mehrwertig und steht NICHT im Baum', () => {
+  // Ein Kugelhahn gehört je nach Zulassung zu mehreren Gewerken — ein Baum
+  // kann das nicht abbilden, deshalb ist einsatzbereiche ein eigenes Merkmal.
+  const heizung = wissen.klassenFuerEinsatzbereich('heizung');
+  assert(heizung.includes('kugelhahn'), 'Kugelhahn fehlt bei Heizung');
+  assert(heizung.includes('rohr'));
+  assert(wissen.klassenFuerEinsatzbereich('gas').includes('kugelhahn'));
+  assert(!wissen.klassenFuerEinsatzbereich('gas').includes('pumpe'));
+});
+
+console.log('\n── Merkmalsstufen ──');
+pruefe('globale Pflichtmerkmale werden vererbt', () => {
+  const m = wissen.merkmaleFuer('rohr');
+  assert(m.pflicht.includes('dimension'), 'dimension nicht geerbt');
+  assert(m.pflicht.includes('material'), 'material nicht geerbt');
+});
+pruefe('Anwendbarkeit: Pumpe hat keine Dimension, sondern eine Baulänge', () => {
+  const m = wissen.merkmaleFuer('pumpe');
+  assert(!m.pflicht.includes('dimension'), 'Pumpe wird nach Dimension gefragt');
+  assert(m.pflicht.includes('baulaenge'), 'Ersatzmerkmal greift nicht');
+  const a = wissen.merkmalAnwendbar('dimension', 'pumpe');
+  assert.equal(a.feld, 'baulaenge');
+});
+pruefe('Klasse darf ein globales Pflichtmerkmal herabstufen', () => {
+  // Beim Kugelhahn trennt die Zulassung, nicht das Material.
+  const m = wissen.merkmaleFuer('kugelhahn');
+  assert(m.optional.includes('material'), 'material blockiert beim Kugelhahn');
+  assert(m.pflicht.includes('zulassung'), 'zulassung nicht auf Pflicht gehoben');
+});
+pruefe('T-Stück: Dimension heißt dn1', () => {
+  assert.equal(wissen.merkmalAnwendbar('dimension', 't_stueck').feld, 'dn1');
+  assert(wissen.merkmaleFuer('t_stueck').pflicht.includes('dn1'));
+});
+
+console.log('\n── Lernende Attributerwartung ──');
+pruefe('erstmals genannte Merkmale werden zur Anhebung vorgeschlagen', () => {
+  const vor = wissen.pruefeAnhebung('kugelhahn',
+    { dimension: 'DN20', zulassung: 'heizung', marke: 'Bonfix', artnr: 'BX-1120' });
+  const felder = vor.map((v) => v.feld).sort();
+  assert.deepEqual(felder, ['artnr', 'marke'], 'Vorschlag stimmt nicht: ' + JSON.stringify(vor));
+  assert(vor.every((v) => v.nach === 'erwartet'), 'Gelerntes darf nicht sofort Pflicht werden');
+});
+pruefe('bereits erwartete Merkmale lösen keinen Vorschlag aus', () => {
+  const vor = wissen.pruefeAnhebung('kugelhahn', { dimension: 'DN20', zulassung: 'gas', anschluss: 'ig/ig' });
+  assert.deepEqual(vor, [], 'schlägt Bekanntes erneut vor');
+});
+pruefe('völlig neues Merkmal wird erkannt', () => {
+  const vor = wissen.pruefeAnhebung('kugelhahn', { oberflaeche: 'vernickelt' });
+  assert.equal(vor[0].feld, 'oberflaeche');
+  assert.equal(vor[0].von, 'unbekannt');
+});
+pruefe('bestätigte Anhebung wirkt sofort', () => {
+  const echt = path.join(wissen.ORDNER, 'gelernt.yaml');
+  const sicherung = fs.readFileSync(echt, 'utf-8');
+  try {
+    wissen.lerne({ art: 'attribut', klasse: 'kugelhahn', merkmal: 'marke',
+      stufe: 'erwartet', bestaetigt_von: '999' });
+    assert(wissen.merkmaleFuer('kugelhahn').erwartet.includes('marke'),
+      'gelerntes Merkmal wird nicht erwartet');
+    assert.deepEqual(wissen.pruefeAnhebung('kugelhahn', { marke: 'Bonfix' }), [],
+      'schlägt weiter vor, obwohl schon gelernt');
+  } finally {
+    fs.writeFileSync(echt, sicherung, 'utf-8');
+    wissen.neuLaden();
+  }
 });
 
 console.log('\n── Kontext für die KI ──');

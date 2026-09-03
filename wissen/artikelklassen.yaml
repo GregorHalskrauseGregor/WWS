@@ -1,122 +1,149 @@
-# Artikelklassen: welche Angaben eine Artikelart braucht
+# Artikelklassen
 #
-# identitaet: Merkmale, die zwei Zeilen unterscheiden. Sind sie alle gleich,
-#             ist es derselbe Artikel (und damit dieselbe Position, ggf. mit
-#             mehreren Chargen).
-# pflicht:    ohne diese Angaben ist eine Einlagerung nicht sinnvoll — der Bot
-#             fragt gezielt nach, statt eine halbe Position anzulegen.
-# optional:   wird übernommen, wenn genannt; erzeugt aber keine Rückfrage.
-# regeln:     Schlussfolgerungen, die der Code zieht, bevor er nachfragt.
-# frage:      der Wortlaut der Rückfrage je Merkmal.
-#
-# Pflegehinweis: eine neue Artikelart ist ein neuer Abschnitt. "erkennen_an"
-# sagt dem Bot, wann die Klasse gemeint ist.
+# warengruppe:      Pfad im Baum aus warengruppen.yaml (punktgetrennt).
+#                   Beantwortet "alle Absperrarmaturen", "alle Fittinge".
+# einsatzbereiche:  In welchen Gewerken die Art vorkommen KANN. Wofür ein
+#                   konkretes Stück zugelassen ist, sagt sein Merkmal
+#                   "zulassung" — deshalb steht das Gewerk nicht im Baum.
+# identitaet:       Merkmale, die zwei Zeilen unterscheiden. Alle gleich =
+#                   derselbe Artikel.
+# pflicht:          zusätzlich zu den globalen Pflichtmerkmalen aus
+#                   merkmale.yaml (menge, dimension, material). Nur hier
+#                   eintragen, was DIESE Art darüber hinaus braucht.
+# erwartet:         wird einmal gefragt, darf übersprungen werden.
+# regeln:           was der Code schließt, bevor er fragt.
 
 rohr:
   erkennen_an: [rohr, rohre, stange, leitung]
+  warengruppe: rohre_leitungen.metallrohr
+  einsatzbereiche: [heizung, trinkwasser, gas]
   identitaet: [material, dimension, wandstaerke]
-  pflicht:    [material, dimension, laenge]
-  optional:   [marke, artnr, zulassung, wandstaerke]
+  pflicht:    [laenge]
+  erwartet:   [wandstaerke]
+  optional:   [marke, artnr, zulassung]
   einheit:    m
   frage:
-    material:  "Aus welchem Material — Kupfer, Stahl (schwarz), verzinkt, Edelstahl oder Verbundrohr?"
-    dimension: "Welche Dimension? (z. B. 22 mm, DN25, 1/2 Zoll)"
-    laenge:    "Wie lang — einzelne Meter oder ganze Stangen?"
+    laenge:      "Wie lang — einzelne Meter oder ganze Stangen?"
+    wandstaerke: "Welche Wandstärke? (überspringen, wenn unbekannt)"
 
 bogen:
   erkennen_an: [bogen, boegen, bögen, winkel, knie]
+  warengruppe: fittinge.formstuecke
+  einsatzbereiche: [heizung, trinkwasser, gas]
   identitaet: [material, dimension, winkel, verbindung, kontur, enden]
-  pflicht:    [material, dimension, verbindung]
-  optional:   [winkel, kontur, enden, marke, artnr, zulassung]
+  pflicht:    [verbindung]
+  erwartet:   [winkel, enden]
+  optional:   [kontur, marke, artnr, zulassung]
   einheit:    "Stk."
   regeln:
-    # Ohne Angabe ist ein Bogen 90 Grad — alles andere wird ausdrücklich gesagt.
     - wenn: "winkel fehlt"
       dann: "winkel = 90"
-    # Pressfittinge brauchen zwingend die Kontur, sonst passt die Backe nicht.
     - wenn: "verbindung = pressen und kontur fehlt"
       dann: "nachfragen kontur"
   frage:
-    material:   "Aus welchem Material?"
-    dimension:  "Welche Dimension?"
     verbindung: "Wie wird verbunden — gepresst, gelötet, geschweißt oder Gewinde?"
     kontur:     "Welche Presskontur — V, M, TH oder U?"
     enden:      "Beide Seiten Muffe, oder eine Seite Spitzende?"
 
 t_stueck:
   erkennen_an: [t-stueck, tstueck, t stück, t-stück, abzweig]
+  warengruppe: fittinge.formstuecke
+  einsatzbereiche: [heizung, trinkwasser, gas]
   identitaet: [material, dn1, dn2, dn3, verbindung, kontur]
-  pflicht:    [material, dn1, verbindung]
-  optional:   [dn2, dn3, kontur, marke, artnr, zulassung]
+  pflicht:    [dn1, verbindung]
+  erwartet:   [dn2, dn3]
+  optional:   [kontur, marke, artnr, zulassung]
   einheit:    "Stk."
+  # dimension heißt hier dn1 — sonst würde global nach "dimension" gefragt.
+  dimension_heisst: dn1
   regeln:
-    # Wird nur eine Dimension genannt, ist das T-Stück durchgehend gleich groß.
-    # Ein reduziertes T-Stück wird immer ausdrücklich als solches genannt.
     - wenn: "dn2 fehlt und dn3 fehlt"
       dann: "dn2 = dn1, dn3 = dn1"
     - wenn: "dn3 fehlt"
       dann: "dn3 = dn1"
   frage:
-    material:   "Aus welchem Material?"
     dn1:        "Welche Dimension hat der Durchgang?"
     dn2:        "Und der Abgang — gleiche Dimension oder reduziert?"
     verbindung: "Wie wird verbunden — gepresst, gelötet, geschweißt oder Gewinde?"
 
 muffe:
   erkennen_an: [muffe, muffen, verbinder, kupplung]
+  warengruppe: fittinge.verbinder
+  einsatzbereiche: [heizung, trinkwasser, gas]
   identitaet: [material, dimension, verbindung, kontur]
-  pflicht:    [material, dimension, verbindung]
-  optional:   [kontur, marke, artnr, zulassung]
+  pflicht:    [verbindung]
+  erwartet:   [kontur]
+  optional:   [marke, artnr, zulassung]
   einheit:    "Stk."
+  frage:
+    verbindung: "Wie wird verbunden — gepresst, gelötet, geschweißt oder Gewinde?"
 
 reduktion:
   erkennen_an: [reduktion, reduzierung, reduzierstueck, reduzierstück]
+  warengruppe: fittinge.uebergaenge
+  einsatzbereiche: [heizung, trinkwasser, gas]
   identitaet: [material, dn1, dn2, verbindung, kontur]
-  pflicht:    [material, dn1, dn2, verbindung]
-  optional:   [kontur, marke, artnr]
+  pflicht:    [dn1, dn2, verbindung]
+  erwartet:   [kontur]
+  optional:   [marke, artnr]
   einheit:    "Stk."
+  dimension_heisst: dn1
   frage:
     dn1: "Von welcher Dimension?"
     dn2: "Auf welche Dimension?"
+    verbindung: "Wie wird verbunden?"
 
 kugelhahn:
   erkennen_an: [kugelhahn, kugelhaehne, kugelhähne, absperrhahn, kfe]
+  warengruppe: armaturen.absperr
+  einsatzbereiche: [heizung, trinkwasser, gas]
   identitaet: [dimension, zulassung, anschluss, marke, artnr]
-  pflicht:    [dimension, zulassung]
-  optional:   [anschluss, griff, marke, artnr]
+  pflicht:    []
+  erwartet:   [anschluss]
+  optional:   [griff, marke, artnr]
   einheit:    "Stk."
-  regeln:
-    # Ohne Angabe: die niedrigste Zulassung annehmen, nicht die höchste.
-    - wenn: "zulassung fehlt"
-      dann: "nachfragen zulassung"
+  # material ist beim Kugelhahn selten der Unterschied — die Zulassung ist es.
+  material_optional: true
   frage:
-    dimension: "Welche Dimension? (z. B. 1/2 Zoll oder DN15)"
-    zulassung: "Für welchen Bereich — Heizung, Trinkwasser oder Gas?"
     anschluss: "Beidseitig Innengewinde, oder Außen-/Innengewinde?"
 
 pumpe:
   erkennen_an: [pumpe, umwaelzpumpe, umwälzpumpe, heizungspumpe]
+  warengruppe: pumpen.umwaelz
+  einsatzbereiche: [heizung, trinkwasser]
   identitaet: [marke, typ, baulaenge, anschluss]
+  # baulaenge ist die Dimension der Pumpe (siehe ersatz in merkmale.yaml)
+  # und damit Pflicht — 25-60 und 25-40 sind verschiedene Artikel.
   pflicht:    [marke, typ]
-  optional:   [baulaenge, anschluss, artnr]
+  erwartet:   [anschluss]
+  optional:   [artnr]
   einheit:    "Stk."
   frage:
-    marke: "Von welchem Hersteller?"
-    typ:   "Welcher Typ genau? (z. B. Magna3 25-60)"
+    marke:     "Von welchem Hersteller?"
+    typ:       "Welcher Typ genau? (z. B. Magna3 25-60)"
+    baulaenge: "Welche Baulänge? (z. B. 180 mm)"
 
 befestigung:
   erkennen_an: [schelle, rohrschelle, duebel, dübel, stockschraube, schraube, mutter]
+  warengruppe: befestigung.schellen
+  einsatzbereiche: [heizung, trinkwasser, gas, abwasser]
   identitaet: [art, dimension, gewinde]
-  pflicht:    [art, dimension]
+  pflicht:    [art]
+  erwartet:   [gewinde]
   optional:   [material, marke]
   einheit:    "Stk."
+  frage:
+    art:     "Was genau — Schelle, Dübel, Stockschraube?"
+    gewinde: "Welches Gewinde? (z. B. M8)"
 
-# Auffangklasse: alles, was keiner Artikelart zugeordnet werden kann.
-# Bewusst genügsam — lieber erfassen als blockieren. Der Bot schlägt vor,
-# eine passende Klasse anzulegen, wenn dieselbe Art öfter hier landet.
+# Auffangklasse. Bewusst genügsam: lieber erfassen als blockieren.
+# Landet dieselbe Art hier öfter, schlägt der Bot eine eigene Klasse vor.
 sonstiges:
   erkennen_an: []
+  warengruppe: sonstiges
+  einsatzbereiche: []
   identitaet: [bezeichnung]
   pflicht:    [bezeichnung]
+  erwartet:   []
   optional:   [marke, artnr, dimension, material]
   einheit:    "Stk."

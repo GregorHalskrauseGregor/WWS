@@ -1,0 +1,83 @@
+# Warengruppen-Baum
+#
+# Beantwortet Fragen auf jeder Ebene: "alle Absperrarmaturen", "alle
+# Kugelhähne", "alle Fittinge in DN20". Die oberste Ebene ist zugleich die
+# Kategorie in der Lagerdatei — deshalb heißt sie wie bisher, damit bestehende
+# Zeilen gültig bleiben.
+#
+# WICHTIG — was hier NICHT hineingehört: das Gewerk (Heizung, Trinkwasser, Gas).
+# Ein Kugelhahn DN15 ist je nach Zulassung für Heizung ODER Trinkwasser ODER
+# beides. Ein Baum kennt aber nur einen Platz je Artikel. Deshalb ist der
+# Einsatzbereich ein eigenes, mehrwertiges Merkmal (siehe merkmale.yaml) und
+# steht in artikelklassen.yaml je Artikelart.
+#
+# Pflegehinweis: "klassen" verweist auf Artikelarten aus artikelklassen.yaml.
+# Eine Ebene ohne "kinder" ist ein Blatt.
+
+rohre_leitungen:
+  name: "Rohre & Leitungen"
+  kinder:
+    metallrohr:   { name: "Metallrohre",        klassen: [rohr] }
+    kunststoff:   { name: "Kunststoff & Verbund", klassen: [] }
+    abwasserrohr: { name: "Abwasserrohre",      klassen: [] }
+
+fittinge:
+  name: "Fittinge & Verbindungstechnik"
+  kinder:
+    formstuecke:  { name: "Formstücke",  klassen: [bogen, t_stueck, reduktion] }
+    verbinder:    { name: "Verbinder",   klassen: [muffe] }
+    uebergaenge:  { name: "Übergänge",   klassen: [] }
+
+armaturen:
+  name: "Armaturen & Ventile"
+  kinder:
+    absperr:      { name: "Absperrarmaturen", klassen: [kugelhahn] }
+    regelung:     { name: "Regelarmaturen",   klassen: [] }
+    sicherheit:   { name: "Sicherheitsarmaturen", klassen: [] }
+
+pumpen:
+  name: "Pumpen & Antriebe"
+  kinder:
+    umwaelz:      { name: "Umwälzpumpen", klassen: [pumpe] }
+    druckerhoehung: { name: "Druckerhöhung", klassen: [] }
+
+waermeerzeugung:
+  name: "Wärmeerzeugung"
+  kinder:
+    kessel:       { name: "Kessel & Thermen", klassen: [] }
+    waermepumpe:  { name: "Wärmepumpen",      klassen: [] }
+    speicher:     { name: "Speicher",         klassen: [] }
+
+heizkoerper:
+  name: "Heizkörper & Flächenheizung"
+  kinder:
+    radiator:     { name: "Heizkörper",       klassen: [] }
+    flaeche:      { name: "Flächenheizung",   klassen: [] }
+
+sanitaer:
+  name: "Sanitärobjekte"
+  kinder:
+    keramik:      { name: "Keramik",          klassen: [] }
+    wanne_dusche: { name: "Wannen & Duschen", klassen: [] }
+
+daemmung:
+  name: "Dämmung & Isolierung"
+  kinder: {}
+
+befestigung:
+  name: "Befestigung & Montagematerial"
+  kinder:
+    schellen:     { name: "Schellen",     klassen: [befestigung] }
+    verbindungsmittel: { name: "Schrauben & Dübel", klassen: [] }
+
+elektro:
+  name: "Elektro & Steuerungstechnik"
+  kinder: {}
+
+werkzeug:
+  name: "Werkzeug & Verbrauchsmaterial"
+  kinder: {}
+
+sonstiges:
+  name: "Sonstiges"
+  kinder: {}

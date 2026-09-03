@@ -1,24 +1,27 @@
-// Feste SHK-Kategorienliste.
-// Wird von der KI zur Klassifizierung neuer Positionen genutzt und
-// bestimmt die Reihenfolge der Kategorie-Abschnitte im "Lagerbestand"-Blatt.
+// SHK-Kategorien — die oberste Ebene des Warengruppen-Baums.
 //
-// Die KI ordnet NEUE Positionen (z.B. aus Lieferschein-Import) einer
-// dieser Kategorien zu. Kategorien aus Importen, die NICHT in dieser
-// Liste stehen, werden trotzdem erkannt und alphabetisch ans Ende sortiert.
+// Frueher stand die Liste hier fest im Code, waehrend wissen/warengruppen.yaml
+// dieselben Kategorien nochmal fuehrte. Zwei Listen fuer dieselbe Sache laufen
+// zwangslaeufig auseinander, deshalb ist der Baum jetzt die einzige Quelle.
+//
+// Die Reihenfolge bestimmt die Abschnitte in der Lagerliste.
 
-const KATEGORIEN = [
-  'Rohre & Leitungen',
-  'Fittinge & Verbindungstechnik',
-  'Armaturen & Ventile',
-  'Pumpen & Antriebe',
-  'Wärmeerzeugung',
-  'Heizkörper & Flächenheizung',
-  'Sanitärobjekte',
-  'Dämmung & Isolierung',
-  'Befestigung & Montagematerial',
-  'Elektro & Steuerungstechnik',
-  'Werkzeug & Verbrauchsmaterial',
-  'Sonstiges'
-];
+const wissen = require('./lib/wissen');
 
-module.exports = { KATEGORIEN };
+let _kategorien = null;
+function laden() {
+  if (_kategorien) return _kategorien;
+  try {
+    const aus = wissen.oberkategorien();
+    _kategorien = aus.length ? aus : ['Sonstiges'];
+  } catch (err) {
+    console.warn('Warengruppen nicht lesbar, nutze Notliste: ' + err.message);
+    _kategorien = ['Sonstiges'];
+  }
+  return _kategorien;
+}
+
+module.exports = {
+  get KATEGORIEN() { return laden(); },
+  neuLaden() { _kategorien = null; wissen.neuLaden(); return laden(); }
+};
