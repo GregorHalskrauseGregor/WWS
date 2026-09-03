@@ -6,7 +6,7 @@
 // Tool-Definitionen sind in einem neutralen Format (Anthropic-Stil mit
 // input_schema). Die Provider konvertieren sie in ihr eigenes Format.
 
-const { webSearch, webFetch } = require('./web');
+const dienste = require('./dienste');
 
 // Welche Tools gerade verfügbar sind, hängt davon ab, ob die nötigen
 // API-Keys gesetzt sind UND der Main-Provider Tool-Use unterstützt.
@@ -17,7 +17,7 @@ function verfuegbareTools(mainProvider) {
     return [];
   }
   const tools = [];
-  if (process.env.BRAVE_API_KEY) {
+  if (dienste.verfuegbar('suche')) {
     tools.push({
       name: 'web_search',
       description: 'Sucht im Internet nach aktuellen Informationen zu einer Suchanfrage. ' +
@@ -74,7 +74,7 @@ function verfuegbareTools(mainProvider) {
 async function fuehreToolAus(name, args) {
   try {
     if (name === 'web_search') {
-      const erg = await webSearch(args && args.query, { maxResults: args && args.maxResults });
+      const erg = await dienste.suche(args && args.query, args && args.maxResults);
       return verpackeAlsExterneDaten(name, erg);
     }
     if (name === 'web_fetch') {
@@ -84,7 +84,7 @@ async function fuehreToolAus(name, args) {
       if (check.blockiert) {
         return verpackeAlsExterneDaten(name, 'BLOCKIERT: ' + check.grund);
       }
-      const erg = await webFetch(args && args.url);
+      const erg = await dienste.lesen(args && args.url);
       return verpackeAlsExterneDaten(name, erg);
     }
     return 'Unbekanntes Tool: ' + name;

@@ -8,7 +8,11 @@
 const path = require('path');
 
 const WURZEL = __dirname;
-const DATA = path.join(WURZEL, 'data');
+// Datenwurzel ist umlenkbar: auf Railway zeigt das Volume woanders hin, und
+// Tests laufen so gegen ein Wegwerf-Verzeichnis statt gegen echte Nutzerdaten.
+const DATA = process.env.WWS_DATA
+  ? path.resolve(process.env.WWS_DATA)
+  : path.join(WURZEL, 'data');
 
 // ---------------------------------------------------------------- Schwellen
 const SCHWELLEN = {

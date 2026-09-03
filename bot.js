@@ -20,7 +20,8 @@ require('dotenv').config();
 
 const fs = require('fs');
 const { PFADE } = require('./config');
-const { getProvider } = require('./providers');
+const { getProvider, uebersicht } = require('./providers');
+const fachdienste = require('./dienste');
 const experten = require('./experten');
 const adapter = require('./adapter/telegram');
 
@@ -39,25 +40,25 @@ try {
     'gehen alle Daten beim nächsten Redeploy verloren. Ursache: ' + err.message);
 }
 
-const mainProvider = getProvider('main');
-const lightProvider = getProvider('light');
+// Ein Anbieter je Aufgabe — konfigurierbar, mit Fallback-Kette (siehe providers/index.js).
+const chatProvider = getProvider('chat');
+const nurText = (provider) => async (systemPrompt, userMessage, opts = {}) =>
+  (await provider.chat(systemPrompt, userMessage, opts)).content;
 
-// Dünne Wrapper: Aufrufer bekommen nur den Text, nicht das ganze Provider-Objekt.
-const mainChat = async (systemPrompt, userMessage, opts = {}) =>
-  (await mainProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'main' })).content;
-const lightChat = async (systemPrompt, userMessage, opts = {}) =>
-  (await lightProvider.chat(systemPrompt, userMessage, { ...opts, rolle: 'light' })).content;
+const antwortChat = nurText(chatProvider);
+const routerChat = nurText(getProvider('router'));
+const extraktionChat = nurText(getProvider('extraktion'));
+const summaryChat = nurText(getProvider('summary'));
 
 const geladen = experten.listeStatus();
-console.log(`Provider main:  ${mainProvider.name}`);
-console.log(`Provider light: ${lightProvider.name}`);
+for (const r of uebersicht()) {
+  console.log(`Anbieter ${r.rolle.padEnd(11)} ${r.anbieter} (${r.modell})`);
+}
+for (const d of fachdienste.status()) {
+  console.log(`Dienst   ${d.art.padEnd(14)} ` +
+    d.kette.map((a) => `${a.name}${a.bereit ? '' : ' (kein Key)'}`).join(' -> ') || '(keiner)');
+}
 console.log(`Experten: ${geladen.filter((e) => e.implementiert).map((e) => e.id).join(', ') || '(keine)'}` +
   (geladen.some((e) => !e.implementiert)
     ? ` | Stubs: ${geladen.filter((e) => !e.implementiert).map((e) => e.id).join(', ')}` : ''));
-if (process.env.BRAVE_API_KEY || process.env.JINA_API_KEY) {
-  console.log('Web-Tools aktiv: ' +
-    [process.env.BRAVE_API_KEY && 'web_search', process.env.JINA_API_KEY && 'web_fetch']
-      .filter(Boolean).join(' '));
-}
-
-adapter.starte({ token, provider: mainProvider, mainChat, lightChat });
+adapter.starte({ token, provider: chatProvider, antwortChat, routerChat, extraktionChat, summaryChat });

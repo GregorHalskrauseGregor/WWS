@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const BEGRUESSUNG_PATH = path.join(__dirname, 'data', 'begruessung.txt');
+const BEGRUESSUNG_PATH = require('./config').PFADE.BEGRUESSUNG;
 
 const STANDARD_BEGRUESSUNG = `👋 *KI-Chatbot* — Themen, Gedächtnis, Web-Recherche, PDF-Erstellung, Foto/Sprache/PDF/Excel-Eingabe, Multi-User-isoliert, Sicherheits-Strikter-Modus.
 *Experten:* Recherche & Materialaufmaß voll funktional. 4 Stubs (Rechnung, Bestellung, Rückgabe, Entnahme). /experten für Details.

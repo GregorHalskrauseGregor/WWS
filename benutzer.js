@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_ROOT = path.join(__dirname, 'data', 'users');
+const DATA_ROOT = require('./config').PFADE.USERS;
 
 function sichereChatId(chatId) {
   const s = String(chatId);

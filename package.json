@@ -1,11 +1,13 @@
 {
   "name": "ki-excel-tool",
   "version": "1.0.0",
-  "description": "Telegram-Bot mit austauschbarer KI-Anbindung, verwaltet eine Materialliste in Excel",
+  "description": "Telegram-Bot mit Router-KI vor austauschbaren Expertensystemen; parallele Gespraechsfaeden, austauschbare KI-Anbieter und Fach-APIs",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "setup-example": "node create-example.js"
+    "test": "node tests/smoke.js && node tests/e2e.js",
+    "test:smoke": "node tests/smoke.js",
+    "test:e2e": "node tests/e2e.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

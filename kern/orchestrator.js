@@ -86,7 +86,7 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
   ratelimit.zaehleNachricht(chatId);
 
   // 1) EINE Entscheidung: welcher Faden, welche Aktion, welcher Experte.
-  const routing = await router.entscheide({ text, dokInfo, chatId, chat: dienste.mainChat });
+  const routing = await router.entscheide({ text, dokInfo, chatId, chat: dienste.routerChat });
   dienste.protokoll?.('Router',
     `thema=${routing.thema.id || 'neu'} aktion=${routing.aktion} ` +
     `experte=${routing.experte || '-'} confidence=${routing.confidence.toFixed(2)}` +

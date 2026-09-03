@@ -5,3 +5,6 @@ node_modules/
 # nicht ins Repo. Beim lokalen Entwickeln liegt das Verzeichnis trotzdem daneben,
 # wird aber nicht committet.
 data/
+
+# Git-Aufraeumreste (entstehen nur auf gemounteten Laufwerken ohne Loeschrecht)
+.git/stale/

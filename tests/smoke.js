@@ -221,6 +221,86 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
     assert.match(text, /abgebrochen/);
   });
 
+  console.log('\n── Neue Experten (Test der Architektur) ──');
+  pruefe('Bestellung ist ein Vorgangs-Experte', () => {
+    const b = experten.findeExperteMitId('bestellung');
+    assert.equal(experten.art(b), 'Vorgang');
+    assert(b.schema.lieferant.pflicht && b.schema.positionen.pflicht);
+    assert.equal(typeof b.finalisiere, 'function');
+  });
+  pruefe('Bestellung braucht keine eigene Sammel-Logik mehr', () => {
+    const quelle = fs.readFileSync(path.join(__dirname, '..', 'experten', 'bestellung.js'), 'utf-8');
+    for (const verboten of ['ladeSession', 'JSON.parse', 'fehltEtwas', 'extrahiereJson']) {
+      assert(!quelle.includes(verboten), `bestellung.js macht wieder ${verboten} selbst`);
+    }
+  });
+  pruefe('Lagerauskunft bringt eigene Werkzeuge mit', () => {
+    const l = experten.findeExperteMitId('lagerauskunft');
+    assert.deepEqual(l.tools.map((t) => t.name), ['bestand_suchen', 'bedarf_pruefen', 'ganze_liste']);
+  });
+  pruefe('nurEigeneTools blendet die Web-Tools aus', () => {
+    const l = experten.findeExperteMitId('lagerauskunft');
+    const w = werkzeuge.fuerExperte(l, { supportsTools: true });
+    assert(!w.definitionen.some((d) => d.name === 'web_search'), 'Web-Suche wurde trotzdem angeboten');
+    assert.equal(w.definitionen.length, 3);
+  });
+
+  console.log('\n── Kern kennt keinen Experten namentlich ──');
+  pruefe('kein Experten-Name in Kern, Adapter oder Einstieg', () => {
+    const ids = experten.alleExperten().map((e) => e.id);
+    for (const datei of ['kern/orchestrator.js', 'kern/router.js', 'kern/vorgangsmotor.js',
+                         'kern/werkzeuge.js', 'adapter/telegram.js', 'bot.js']) {
+      const quelle = fs.readFileSync(path.join(__dirname, '..', datei), 'utf-8');
+      for (const id of ids) {
+        assert(!quelle.includes(`'${id}'`) && !quelle.includes(`"${id}"`),
+          `${datei} nennt den Experten "${id}" beim Namen`);
+      }
+    }
+  });
+
+  console.log('\n── Dienste-Registry ──');
+  const fachdienste = require('../dienste');
+  pruefe('alle vier Arten registriert', () => {
+    assert.deepEqual(fachdienste.status().map((d) => d.art), ['ocr', 'transkription', 'suche', 'lesen']);
+  });
+  pruefe('jeder Dienst nennt seinen benötigten Key', () => {
+    for (const d of fachdienste.status()) {
+      for (const a of d.kette) assert(a.benoetigt !== undefined, `${d.art}/${a.name}`);
+    }
+  });
+  await pruefeAsync('fehlender Key -> klare Meldung statt Absturz', async () => {
+    const alt = process.env.MISTRAL_API_KEY;
+    delete process.env.MISTRAL_API_KEY;
+    try {
+      await fachdienste.ocr(Buffer.from('x'), 'image/jpeg');
+      throw new Error('haette scheitern muessen');
+    } catch (e) {
+      assert.match(e.message, /MISTRAL_API_KEY|Kein nutzbarer/);
+    } finally { if (alt) process.env.MISTRAL_API_KEY = alt; }
+  });
+
+  console.log('\n── Anbieter-Rollen ──');
+  const providers = require('../providers');
+  pruefe('vier Aufgaben-Rollen', () => {
+    assert.deepEqual(providers.uebersicht().map((r) => r.rolle),
+      ['chat', 'extraktion', 'router', 'summary']);
+  });
+  pruefe('Rolle einzeln konfigurierbar', () => {
+    const alt = process.env.AI_PROVIDER_ROUTER;
+    process.env.AI_PROVIDER_ROUTER = 'openai';
+    try { assert.equal(providers.getProvider('router').name, 'openai'); }
+    finally { if (alt) process.env.AI_PROVIDER_ROUTER = alt; else delete process.env.AI_PROVIDER_ROUTER; }
+  });
+  pruefe('Fallback nur bei Ausfall-Fehlern, nicht bei Programmfehlern', () => {
+    assert(providers._lohntFallback(new Error('HTTP 429 rate limit')));
+    assert(providers._lohntFallback(new Error('fetch failed')));
+    assert(!providers._lohntFallback(new TypeError('x is not a function')));
+  });
+  pruefe('main/light bleiben rueckwaertskompatibel', () => {
+    assert(providers.getProvider('main').name);
+    assert(providers.getProvider('light').name);
+  });
+
   console.log('\n── MERKE-Hooks ──');
   pruefe('Fakt wird herausgeschnitten', () => {
     const r = orchestrator._trenneMerkeHooks('Alles klar.\n[MERKE: mag Kaffee]');

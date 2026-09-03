@@ -17,7 +17,7 @@ const DATEINAME = 'gedaechtnis.txt';
 const MAX_ZEICHEN = 6000;
 
 function userVerzeichnis(chatId) {
-  return path.join(__dirname, 'data', 'users', String(chatId));
+  return require('./config').PFADE.user(chatId);
 }
 
 function pfad(chatId) {

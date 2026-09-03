@@ -21,11 +21,10 @@ const benutzer = require('../benutzer');
 const ratelimit = require('../ratelimit');
 const { schreibeEintrag, leseLetzte } = require('../protokoll');
 const { ladeBegruessung } = require('../begruessung');
-const { transkribiere } = require('../transcribe');
-const { mistralOCR } = require('../ocr');
+const fachdienste = require('../dienste');
 const { excelZuText, wordZuText } = require('../dokument');
 
-function starte({ token, provider, mainChat, lightChat }) {
+function starte({ token, provider, antwortChat, routerChat, extraktionChat, summaryChat }) {
   const bot = new TelegramBot(token, { polling: true });
   const offeneBestaetigungen = new Map();
 
@@ -135,11 +134,14 @@ function starte({ token, provider, mainChat, lightChat }) {
   // Alles, was Kern und Experten an Außenwelt brauchen — mehr nicht.
   function dienste(chatId) {
     return {
-      mainChat, lightChat, provider,
+      provider,
+      routerChat,             // Faden- und Experten-Entscheidung
+      chat: extraktionChat,   // Vorgangs-Motor: Freitext -> Delta-Operationen
+      antwortChat,            // freie Antworten
+      lightChat: summaryChat, // Zusammenfassen, Gedächtnis
       protokoll: schreibeEintrag,
       melde: (text) => sendeText(chatId, text),
-      frageBestaetigung: frageBestaetigung(chatId),
-      chat: mainChat // der Vorgangs-Motor nutzt den Hauptkanal für die Extraktion
+      frageBestaetigung: frageBestaetigung(chatId)
     };
   }
 
@@ -190,7 +192,7 @@ function starte({ token, provider, mainChat, lightChat }) {
       try {
         await mitTippt(chatId, async () => {
           await sendeText(chatId, '🎙 Sprachnachricht wird transkribiert …');
-          const text = await transkribiere(await ladeDatei(quelle.file_id));
+          const text = await fachdienste.transkription(await ladeDatei(quelle.file_id), quelle.mime_type || 'audio/ogg');
           await sendeText(chatId, `Verstanden: „${text}"`);
           await verarbeite(chatId, { text });
         });
@@ -212,7 +214,7 @@ function starte({ token, provider, mainChat, lightChat }) {
           // und Inhalt, was damit passiert.
           let inhalt = '';
           try {
-            inhalt = await mistralOCR(buffer.toString('base64'), 'image/jpeg');
+            inhalt = await fachdienste.ocr(buffer, 'image/jpeg');
           } catch (err) {
             schreibeEintrag('Fehler', `OCR: ${err.message}`);
           }
@@ -263,11 +265,11 @@ function starte({ token, provider, mainChat, lightChat }) {
     const n = String(name).toLowerCase();
     try {
       if (mime === 'application/pdf' || n.endsWith('.pdf')) {
-        return await mistralOCR(buffer.toString('base64'), 'application/pdf');
+        return await fachdienste.ocr(buffer, 'application/pdf');
       }
       if (n.endsWith('.xlsx') || n.endsWith('.xls')) return await excelZuText(buffer);
       if (n.endsWith('.docx') || n.endsWith('.doc')) return await wordZuText(buffer);
-      if (mime.startsWith('image/')) return await mistralOCR(buffer.toString('base64'), mime);
+      if (mime.startsWith('image/')) return await fachdienste.ocr(buffer, mime);
       if (mime.startsWith('text/') || n.endsWith('.txt') || n.endsWith('.csv')) {
         return buffer.toString('utf-8').slice(0, 20000);
       }
@@ -439,12 +441,12 @@ function starte({ token, provider, mainChat, lightChat }) {
     for (const e of themen.ladeIndex(msg.chat.id)) {
       const t = themen.ladeThema(msg.chat.id, e.id);
       if (t && kompressor.themaBereitZurKomprimierung(t)) {
-        await kompressor.komprimiereThema(msg.chat.id, e.id, lightChat);
+        await kompressor.komprimiereThema(msg.chat.id, e.id, summaryChat);
         gemacht++;
       }
     }
     const ged = gedaechtnis.istVoll(msg.chat.id)
-      ? await kompressor.komprimiereGedaechtnis(msg.chat.id, lightChat) : false;
+      ? await kompressor.komprimiereGedaechtnis(msg.chat.id, summaryChat) : false;
     return antworte(msg, `Komprimierung fertig. ${gemacht} Thema/Themen verdichtet${ged ? ', Gedächtnis verdichtet' : ''}.`);
   });
 
@@ -464,6 +466,18 @@ function starte({ token, provider, mainChat, lightChat }) {
         typeof b === 'string' ? '• ' + b : `• ${b.befehl} — ${b.beschreibung}`));
     }
     return antworte(msg, zeilen.join('\n'));
+  });
+
+  bot.onText(/^\/dienste\b/, (msg) => {
+    const { uebersicht } = require('../providers');
+    const rollen = uebersicht().map((r) =>
+      `• ${r.rolle}: ${r.anbieter} (${r.modell})`).join('\n');
+    const fach = fachdienste.status().map((d) =>
+      `• ${d.art}: ` + d.kette.map((a) => `${a.name} ${a.bereit ? '✅' : '⚪️'}`).join(', ')).join('\n');
+    return antworte(msg,
+      '*KI-Anbieter je Aufgabe:*\n' + rollen +
+      '\n\n*Fach-Dienste:*\n' + fach +
+      '\n\n_⚪️ = kein Key gesetzt. Reihenfolge und Anbieter stehen in der .env._');
   });
 
   // Von Experten mitgebrachte Befehle — der Kern kennt sie nicht namentlich.

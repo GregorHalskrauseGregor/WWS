@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PROTOKOLL_PATH = path.join(__dirname, 'data', 'protokoll.txt');
+const PROTOKOLL_PATH = require('./config').PFADE.PROTOKOLL;
 const MAX_EINTRAEGE = 200; // Datei nicht unbegrenzt wachsen lassen, älteste Einträge fallen raus
 
 function zeitstempel() {

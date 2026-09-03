@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DATA_ROOT = path.join(__dirname, 'data', 'users');
+const DATA_ROOT = require('./config').PFADE.USERS;
 const INDEX_DATEINAME = 'themen-index.json';
 const THEMA_ORDNER = 'themen';
 
