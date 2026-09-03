@@ -153,16 +153,43 @@ async function verarbeiteText(chatId, userText, dokInhalt = '') {
   // 2) Kontext aufbauen
   const gedaechtnisText = gedaechtnis.ladeGedaechtnis(chatId);
 
-  // 2a) Experten-Erkennung. Vorrang hat eine laufende Session (damit
-  // Trigger-freie Wörter wie "fertig" oder "pdf" trotzdem beim richtigen
-  // Experten landen), dann kommt der Trigger-Match. Sonst Standard-Flow.
+  // 2a) Experten-Erkennung. Drei-Stufen-Logik:
+  //   1) Aktive Session hat IMMER Vorrang (Anpassungen, Bestätigungen)
+  //   2) Sonst: KI-basierte Auswahl (semantisch, robust gegen Falsch-Trigger)
+  //   3) Fallback: Schlüsselwort-Match (nur wenn KI nicht will oder nicht verfügbar)
   let experte = experten.aktiverExperte(chatId);
-  if (!experte) experte = experten.findeExperte(userText);
+
+  // Hilfsfunktion für die KI-Auswahl: holt den Verlauf des jüngsten Themas.
+  async function ladeThemenVerlaufFuerExperten(cId, anzahl) {
+    try {
+      return themen.letzteNachrichten(cId, anzahl);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!experte) {
+    // KI-basierte Auswahl
+    experte = await experten.waehleExpertenMitKI({
+      text: userText,
+      chatId,
+      kontext: {
+        mainChat,
+        ladeThemenVerlauf: ladeThemenVerlaufFuerExperten
+      }
+    });
+  }
+
+  if (!experte) {
+    // Fallback: Schlüsselwort-Match (Stubs sind bereits gefiltert)
+    experte = experten.findeExperte(userText);
+  }
+
   const expertenKontext = experte ? experte.systemPromptAdd : null;
   const systemPrompt = kontext.baueHauptSystemPrompt(gedaechtnisText, expertenKontext);
 
   if (experte) {
-    schreibeEintrag('Experte', `Aktiv: ${experte.id} (${chatId}) — Trigger erkannt in Nachricht`);
+    schreibeEintrag('Experte', `Aktiv: ${experte.id} (${chatId})`);
   }
   const messages = kontext.baueHauptMessages(thema, userText, dokInhalt);
 

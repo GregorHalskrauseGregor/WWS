@@ -155,6 +155,18 @@ function findeThemaMitName(chatId, suchbegriff) {
   return index.find((t) => norm(t.name).includes(ziel)) || null;
 }
 
+// Liest die letzten N Nachrichten des aktivsten Themas (jüngste nach lastActivity).
+// Wird von der KI-basierten Experten-Auswahl genutzt, um den Kontext zu verstehen.
+function letzteNachrichten(chatId, anzahl = 4) {
+  const index = ladeIndex(chatId);
+  if (index.length === 0) return [];
+  // Jüngstes Thema (Index ist nach lastActivity sortiert)
+  const aktivstes = index[0];
+  const thema = ladeThema(chatId, aktivstes.id);
+  if (!thema || !Array.isArray(thema.messages)) return [];
+  return thema.messages.slice(-anzahl);
+}
+
 // Hängt eine neue Nachricht ans Thema an und gibt das aktualisierte Thema zurück.
 function haengeNachrichtAn(chatId, themaId, rolle, inhalt) {
   const thema = ladeThema(chatId, themaId);
@@ -172,6 +184,7 @@ module.exports = {
   DATA_ROOT,
   ladeIndex,
   ladeThema,
+  letzteNachrichten,
   speichereThema,
   aktualisiereIndexEintrag,
   loescheThema,

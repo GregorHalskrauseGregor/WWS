@@ -298,6 +298,27 @@ module.exports = {
 
 Für jeden Stub-Experten gibt es eine `verarbeite`-Funktion, die aktuell nur „noch nicht implementiert" zurückgibt. Sag einfach „ok, jetzt Leistungserfassung" und ich implementiere die Logik — Persistenz, JSON-Schemas, Export, was auch immer gebraucht wird.
 
+## Experten-Auswahl (3-Stufen-Logik)
+
+Damit der Bot den richtigen Experten für eine Nachricht wählt, ohne durch generische Trigger-Wörter fehlgeleitet zu werden (z.B. "brauche Anleitung" darf nicht als Bestellung interpretiert werden), gibt es eine 3-stufige Logik in `bot.js → verarbeiteText()`:
+
+1. **Aktive Session** (höchste Priorität)
+   - Wenn ein Experte eine aktive Aufnahme-Session hat (z.B. Materialaufmaß mit 5 Positionen), wird der User-Input als Anpassung interpretiert, auch wenn die Trigger-Wörter fehlen.
+   - Das ist warum "fertig", "pdf bitte", "ändere Position 2" beim Materialaufmaß funktionieren.
+
+2. **KI-basierte Auswahl** (`experten.waehleExpertenMitKI`)
+   - Die KI bekommt: User-Nachricht, Liste der implementierten Experten mit Beschreibung, aktive Sessions, letzter Themen-Verlauf.
+   - Sie gibt JSON zurück: `{ experte: "id-oder-null", confidence: 0.0-1.0, grund: "..." }`
+   - Confidence >= 0.7: Experte wird aktiviert
+   - Confidence < 0.7 oder null: Standard-Chat
+   - **Stubs werden gefiltert** — die KI sieht sie gar nicht erst.
+
+3. **Schlüsselwort-Fallback** (`experten.findeExperte`)
+   - Nur wenn die KI nicht will oder nicht verfügbar ist.
+   - Stubs sind hier auch gefiltert.
+
+**Wichtige Designentscheidung:** Die Stubs (Leistungserfassung, Bestellung) werden geladen und in `/experten` mit 🚧-Status angezeigt, aber **nicht** der KI zur Auswahl angeboten. Solange sie nicht implementiert sind, können sie nicht versehentlich aktiviert werden.
+
 ## Sicherheit (Strikter Modus)
 
 Der Bot läuft im „Strikt"-Modus mit mehreren Schutz-Layern. Alle sind optional aktivierbar — der aktuelle Stand ist Maximum-Schutz.
