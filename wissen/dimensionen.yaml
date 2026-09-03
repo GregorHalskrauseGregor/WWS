@@ -1,0 +1,59 @@
+# Maßsysteme: Zoll, DN und Außendurchmesser
+#
+# Zweck: "halb Zoll", "DN15" und "15er" können dasselbe meinen — oder eben
+# nicht. Kupfer 15 mm Außendurchmesser ist NICHT DN15, deshalb sind die
+# Tabellen nach Material getrennt.
+#
+# Pflegehinweis: dn ist der Schlüssel, auf den alles normalisiert wird.
+# Fehlt ein Wert, trag die Zeile einfach nach.
+
+stahl_gewinde:
+  bezeichnung: "Stahl / Rotguss, Gewinde"
+  gilt_fuer: [stahl, rotguss, messing, temperguss]
+  tabelle:
+    - { zoll: "3/8", dn: 10, ad: 17.2 }
+    - { zoll: "1/2", dn: 15, ad: 21.3 }
+    - { zoll: "3/4", dn: 20, ad: 26.9 }
+    - { zoll: "1",   dn: 25, ad: 33.7 }
+    - { zoll: "5/4", dn: 32, ad: 42.4 }
+    - { zoll: "6/4", dn: 40, ad: 48.3 }
+    - { zoll: "2",   dn: 50, ad: 60.3 }
+    - { zoll: "5/2", dn: 65, ad: 76.1 }
+    - { zoll: "3",   dn: 80, ad: 88.9 }
+    - { zoll: "4",   dn: 100, ad: 114.3 }
+
+kupfer:
+  bezeichnung: "Kupfer, Außendurchmesser"
+  gilt_fuer: [kupfer]
+  # Bei Kupfer ist der Außendurchmesser die übliche Angabe.
+  # dn_etwa dient nur der Zuordnung zu Gewindeteilen, nicht der Identität.
+  tabelle:
+    - { ad: 12, dn_etwa: 10 }
+    - { ad: 15, dn_etwa: 12 }
+    - { ad: 18, dn_etwa: 15 }
+    - { ad: 22, dn_etwa: 20 }
+    - { ad: 28, dn_etwa: 25 }
+    - { ad: 35, dn_etwa: 32 }
+    - { ad: 42, dn_etwa: 40 }
+    - { ad: 54, dn_etwa: 50 }
+
+verbundrohr:
+  bezeichnung: "Mehrschichtverbundrohr, Außendurchmesser x Wandstärke"
+  gilt_fuer: [verbundrohr, mehrschichtverbund, alu_verbund]
+  tabelle:
+    - { ad: 16, wand: 2.0 }
+    - { ad: 20, wand: 2.0 }
+    - { ad: 26, wand: 3.0 }
+    - { ad: 32, wand: 3.0 }
+    - { ad: 40, wand: 3.5 }
+    - { ad: 50, wand: 4.0 }
+    - { ad: 63, wand: 4.5 }
+
+# Wie Zollangaben geschrieben werden dürfen. Ergebnis ist immer die Bruchform.
+zoll_schreibweisen:
+  "1/2": ["halb zoll", "halbzoll", "1/2\"", "0.5", "dn15 zoll"]
+  "3/4": ["dreiviertel", "dreiviertel zoll", "3/4\"", "0.75"]
+  "1":   ["ein zoll", "einzoll", "1\""]
+  "5/4": ["fünfviertel", "funfviertel", "1 1/4", "1.25"]
+  "6/4": ["sechsviertel", "1 1/2", "1.5", "anderthalb zoll"]
+  "2":   ["zwei zoll", "2\""]

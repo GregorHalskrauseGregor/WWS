@@ -1,0 +1,48 @@
+# Einheiten und Gebindegrößen
+#
+# Zweck: "eine Stange Schwarzrohr" und "6 Meter Stahlrohr" sind dasselbe.
+# Der Bot rechnet Gebinde in die Basiseinheit um, BEVOR gebucht wird.
+#
+# Pflegehinweis: gilt_fuer bezieht sich auf die Artikelart aus
+# artikelklassen.yaml. Fehlt es, gilt der Eintrag überall.
+
+# Schreibweisen, die dieselbe Einheit meinen. Links das Ergebnis.
+schreibweisen:
+  "Stk.":  [stk, stck, stueck, stück, st, x, mal]
+  "m":     [meter, mtr, lfm, laufmeter, lfdm]
+  "kg":    [kilo, kilogramm]
+  "l":     [liter, ltr]
+  "Rolle": [rollen, ring, ringe]
+  "Pack":  [packung, packungen, karton, kartons, schachtel]
+
+# Gebinde, die in eine Menge der Basiseinheit aufgelöst werden.
+# je: wie viel der Basiseinheit ein Gebinde enthält.
+gebinde:
+  stange:
+    basis: m
+    je: 6                      # Standard im Stahlrohrbereich
+    gilt_fuer: [rohr]
+    abweichungen:              # material-spezifisch, schlägt "je"
+      kupfer: 5
+      edelstahl: 6
+    aliasse: [stangen, stg]
+
+  rolle:
+    basis: m
+    je: 50
+    gilt_fuer: [rohr]
+    abweichungen:
+      verbundrohr: 50
+      kupfer_weich: 25
+    aliasse: [ring, bund, rollen]
+
+  bund:
+    basis: Stk.
+    je: 10
+    gilt_fuer: [befestigung]
+    aliasse: [gebinde]
+
+  palette:
+    basis: Stk.
+    je: 100
+    aliasse: [pal]

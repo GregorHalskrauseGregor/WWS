@@ -1,0 +1,53 @@
+# Umgangssprache und Schreibvarianten
+#
+# Zweck: was auf der Baustelle gesagt wird, ist selten das, was im Katalog steht.
+#
+# bedeutet:  worauf normalisiert wird
+# gilt_fuer: Artikelarten, in denen die Übersetzung greift (leer = überall).
+#            Wichtig, weil "schwarz" beim Rohr Stahl heißt, beim Kabel aber
+#            wirklich die Farbe meint.
+
+material:
+  messing:      { bedeutet: rotguss,     gilt_fuer: [muffe, bogen, t_stueck, reduktion, kugelhahn] }
+  ms:           { bedeutet: rotguss,     gilt_fuer: [muffe, bogen, t_stueck, reduktion, kugelhahn] }
+  schwarz:      { bedeutet: stahl,       gilt_fuer: [rohr, bogen, t_stueck, muffe, reduktion] }
+  schwarzrohr:  { bedeutet: stahl,       gilt_fuer: [rohr] }
+  niro:         { bedeutet: edelstahl }
+  vau_zwei_a:   { bedeutet: edelstahl }
+  "v2a":        { bedeutet: edelstahl }
+  "v4a":        { bedeutet: edelstahl }
+  cu:           { bedeutet: kupfer }
+  verzinkt:     { bedeutet: stahl_verzinkt, gilt_fuer: [rohr, bogen, t_stueck, muffe] }
+  vz:           { bedeutet: stahl_verzinkt, gilt_fuer: [rohr, bogen, t_stueck, muffe] }
+  mehrschicht:  { bedeutet: verbundrohr, gilt_fuer: [rohr] }
+  alupex:       { bedeutet: verbundrohr, gilt_fuer: [rohr] }
+
+presssystem:
+  profipress:   { bedeutet: viega_profipress }
+  sanpress:     { bedeutet: viega_sanpress }
+  mapress:      { bedeutet: geberit_mapress }
+  megapress:    { bedeutet: viega_megapress }
+
+# Presskonturen. Verwechslung ist hier sicherheitsrelevant, deshalb wird
+# NICHT geraten: ist die Kontur unklar, fragt der Bot nach.
+kontur:
+  "v":  { bedeutet: kontur_v,  beschreibung: "V-Kontur (Viega, Geberit)" }
+  "m":  { bedeutet: kontur_m,  beschreibung: "M-Kontur (Mapress)" }
+  "th": { bedeutet: kontur_th, beschreibung: "TH-Kontur (Verbundrohr)" }
+  "u":  { bedeutet: kontur_u,  beschreibung: "U-Kontur (Verbundrohr)" }
+
+form:
+  bogen:        { bedeutet: bogen }
+  winkel:       { bedeutet: bogen }
+  knie:         { bedeutet: bogen }
+  muffe:        { bedeutet: muffe }
+  "t":          { bedeutet: t_stueck, gilt_fuer: [muffe, bogen, reduktion] }
+  tstueck:      { bedeutet: t_stueck }
+  reduzierung:  { bedeutet: reduktion }
+  reduzierstueck: { bedeutet: reduktion }
+
+anschluss:
+  ag:      { bedeutet: aussengewinde }
+  ig:      { bedeutet: innengewinde }
+  spitze:  { bedeutet: spitzende }
+  muffe_seite: { bedeutet: muffe }

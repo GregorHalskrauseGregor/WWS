@@ -12,6 +12,7 @@ const material = require('../material');
 const libExcel = require('../lib/excel');
 const { PFADE } = require('../config');
 const { KATEGORIEN } = require('../kategorien');
+const wissen = require('../lib/wissen');
 
 const RICHTUNGEN = {
   einlagern: 'Bestand erhöhen',
@@ -21,6 +22,38 @@ const RICHTUNGEN = {
 };
 
 function zeile(text) { return '• ' + text; }
+
+// Vor jeder Buchung: Gebinde aufloesen. Das ist Uebersetzung mit einer
+// richtigen Antwort, also Codesache — "1 Stange Schwarzrohr" sind 6 Meter.
+//
+// Die BEZEICHNUNG bleibt dabei unangetastet. Sie ist die Beschriftung fuer
+// Menschen; was ein Artikel fachlich IST, gehoert in Merkmale (naechste Stufe).
+// Ein erkanntes Material wird deshalb nur gemeldet, nicht in den Namen
+// hineingeschrieben — sonst wuerde aus "Schwarzrohr DN50" ein "stahl DN50".
+function normalisierePositionen(positionen) {
+  const hinweise = [];
+  const raus = (positionen || []).map((p) => {
+    const bezeichnung = String(p.bezeichnung || '');
+    const art = wissen.klasseFuer(bezeichnung);
+
+    // Material erkennen — auch in Zusammensetzungen wie "Kupferrohr".
+    // Braucht die Gebinde-Umrechnung: eine Kupferstange misst 5 m, eine
+    // Stahlstange 6 m.
+    const material = wissen.materialErkennen(bezeichnung, art);
+
+    const g = wissen.gebinde(p.menge, p.einheit, art, material);
+    if (g.umgerechnet) hinweise.push(`${bezeichnung}: ${g.hinweis}`);
+
+    return {
+      ...p,
+      menge: g.menge != null ? g.menge : p.menge,
+      einheit: g.einheit || p.einheit,
+      _art: art,
+      _material: material
+    };
+  });
+  return { positionen: raus, hinweise };
+}
 
 // ───────────────────────────────────────────────────────────── Ausführung
 
@@ -127,7 +160,7 @@ module.exports = {
     '- DN-Angaben immer zusammenschreiben: "DN 50" -> "DN50".\n' +
     '- zustand ist eines von "neu", "gebraucht", "verschmutzt". Ohne Angabe: "neu".\n' +
     '- kategorie aus dieser festen Liste wählen, sonst "Sonstiges":\n    ' + KATEGORIEN.join(', ') + '\n' +
-    '- Diktier- und OCR-Fehler still korrigieren.',
+    '- Diktier- und OCR-Fehler still korrigieren.\n\n' + wissen.promptKontext(),
 
   commands: [
     {
@@ -164,12 +197,24 @@ module.exports = {
           `Möglich sind: einlagern, entnehmen, reservieren, freigeben.`
       };
     }
-    dienste.protokoll?.('Experte', `Lager ${richtung}: ${daten.positionen.length} Position(en) (${chatId})`);
-    if (richtung === 'einlagern') return einlagern(daten, chatId);
-    if (richtung === 'entnehmen') return entnehmen(daten, chatId);
-    if (richtung === 'reservieren') return reservieren(daten, chatId);
-    return freigeben(daten, chatId);
+    const { positionen, hinweise } = normalisierePositionen(daten.positionen);
+    const gefasst = { ...daten, positionen };
+    if (hinweise.length) {
+      dienste.protokoll?.('Wissen', `Lager ${richtung}: ${hinweise.join(' | ')}`);
+    }
+    dienste.protokoll?.('Experte', `Lager ${richtung}: ${positionen.length} Position(en) (${chatId})`);
+
+    const ergebnis = richtung === 'einlagern' ? await einlagern(gefasst, chatId)
+      : richtung === 'entnehmen' ? await entnehmen(gefasst, chatId)
+      : richtung === 'reservieren' ? await reservieren(gefasst, chatId)
+      : await freigeben(gefasst, chatId);
+
+    // Umrechnungen offenlegen — der Nutzer soll sehen, was aus seinen Worten wurde.
+    if (hinweise.length) {
+      ergebnis.text += `\n\n_Umgerechnet: ${hinweise.join('; ')}_`;
+    }
+    return ergebnis;
   },
 
-  _intern: { einlagern, entnehmen, reservieren, freigeben, RICHTUNGEN }
+  _intern: { einlagern, entnehmen, reservieren, freigeben, normalisierePositionen, RICHTUNGEN }
 };

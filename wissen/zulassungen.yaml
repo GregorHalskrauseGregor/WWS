@@ -1,0 +1,23 @@
+# Zulassungen und ihre Rangfolge
+#
+# Zweck: ein Bauteil mit höherer Zulassung darf einen niedrigeren Bedarf
+# bedienen — nie umgekehrt. Und es wird ZULETZT angefasst, damit nicht ein
+# teurer Gas-Kugelhahn in einer Heizungsleitung landet, solange normale da sind.
+
+# Von niedrig nach hoch. gas erfüllt trinkwasser und heizung mit.
+rangfolge: [heizung, trinkwasser, gas]
+
+bezeichnungen:
+  heizung:
+    beschreibung: "Heizung, keine besondere Zulassung nötig"
+    erkennen_an: [heizung, hz, heizungswasser, ohne zulassung]
+  trinkwasser:
+    beschreibung: "Trinkwasser (DVGW W 270 / KTW)"
+    erkennen_an: [trinkwasser, tw, dvgw, ktw, w270, sanitaer, sanitär]
+  gas:
+    beschreibung: "Gas (DVGW G 260)"
+    erkennen_an: [gas, g260, gaszulassung, dvgw gas]
+
+# Wenn nichts erkennbar ist: die niedrigste Stufe annehmen und nachfragen,
+# sobald der Artikel in einen Bereich soll, der mehr verlangt.
+standard: heizung

@@ -1,0 +1,14 @@
+# Was der Bot dazugelernt hat — getrennt von den gepflegten Dateien.
+#
+# Jeder Eintrag wurde im Chat vorgeschlagen und ausdrücklich bestätigt.
+# Du kannst hier jederzeit löschen oder korrigieren, ohne deine eigenen
+# Regeln anzufassen. Was sich bewährt, wandert am besten von Hand in die
+# passende Datei (synonyme.yaml, dimensionen.yaml, ...).
+#
+# Format:
+#   - art: synonym | dimension | einheit | artikelklasse
+#     ... je nach Art
+#     bestaetigt_von: <Telegram-Chat-ID>
+#     am: <Datum>
+
+eintraege: []
