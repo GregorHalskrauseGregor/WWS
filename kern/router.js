@@ -85,49 +85,39 @@ function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock, hatDatei }
   Beachte den Hinweis zur Datei unten, falls vorhanden.`
     : '\n- Es ist KEINE Datei angehaengt. Die Datei-Aktionen stehen nicht zur Wahl.';
 
-  return `Du bist der Router eines Handwerker-Bots (SHK). Entscheide für die Nachricht ZWEI Dinge:
-(1) zu welchem Gesprächsfaden sie gehört, (2) was damit passieren soll.
+  return `Du bist der Router eines Handwerker-Bots (SHK). Du entscheidest für jede eingehende Nachricht — auch wenn sie unvollständig ist, durcheinander ankommt oder eine Folge-Nachricht zu einer offenen Frage ist — WAS der Bot damit tun soll.
 
-Antworte NUR mit einem JSON-Objekt. Kein Fließtext, keine Erklärung, kein Markdown.
-Halte dich kurz beim Nachdenken — die Entscheidung ist meist offensichtlich.
+Du arbeitest strikt KI-basiert: keine Schluesselwoerter, keine Heuristik, keine Regeln. Du liest die Bedeutung der Nachricht im Kontext des bisherigen Fadens und entscheidest. Wenn du dir unsicher bist, nimm "nachfragen" mit einem konkreten Hinweis — der Nutzer kann dann in der naechsten Nachricht korrigieren oder erlaeutern. Es gibt IMMER eine Loesung, nie einen toten Pfad.
+
+Antworte NUR mit einem JSON-Objekt. Kein Fliesstext, keine Erklaerung, kein Markdown.
 
 THEMEN (jüngstes zuerst):
 ${themenBlock}
 
-EXPERTEN (nur diese sind wählbar):
+EXPERTEN (jede:r ist ein klar abgegrenzter Verantwortungsbereich, lies die Beschreibung):
 ${expertenBlock}
 ${verlaufBlock}
 AKTIONEN:
 ${aktionen}
 
-THEMENWAHL:
-- Passt die Nachricht zu einem bestehenden Thema, gib dessen ID exakt zurück.
-- Ein Thema mit OFFENEM VORGANG hat Vorrang, wenn die Nachricht dazu passt:
-  Ergänzungen ("noch 3 Wandscheiben"), Korrekturen ("Position 2 auf 5"),
-  Antworten auf eine Rückfrage ("16 Stück") und Bestätigungen ("passt", "fertig").
-- Eine kurze Antwort ohne eigenes Thema ("16 Stück", "ja", "der zweite") gehört
-  IMMER zum Faden, der zuletzt eine Frage gestellt hat — NIE in ein neues Thema.
-- "neu" nur bei einem klaren Themenwechsel in einen anderen Sachbereich.
+ENTSCHEIDUNGSREGELN:
 
-AKTIONSWAHL:
-- Generische Wörter sind kein Auslöser: "brauche eine Anleitung" = Recherche,
-  "höchste Leistung" = technische Eigenschaft, "schick dir gleich was" = konversation.
-- Läuft im gewählten Thema ein Vorgang, ist die Aktion fast immer "verarbeiten"
-  mit dem Experten dieses Vorgangs.
+(1) Themenwahl:
+- Passt die Nachricht zu einem bestehenden Thema, nimm dessen ID.
+- Hat das juengste Thema einen OFFENEN VORGANG und die Nachricht erweitert, korrigiert oder beantwortet ihn, gehoert sie IMMER zu diesem Thema. Auch wenn die Nachricht nur ein paar Worte hat ("ja", "16", "geaendert", "Position 2 raus").
+- "neu" nur bei einem klaren Themenwechsel in einen anderen Sachbereich. Im Zweifel lieber das juengste Thema weiterfuehren als ein neues aufmachen.
+
+(2) Aktionswahl:
+- Läuft im gewählten Thema ein Vorgang, ist die Aktion fast immer "verarbeiten" mit dem Experten dieses Vorgangs. Auch wenn die Nachricht unvollständig ist ("DN20", "gebraucht", "noch 3 mehr") — der Experte sammelt weiter.
+- Läuft KEIN Vorgang und die Nachricht enthaelt einen klaren Wunsch, nimm den passenden Experten.
+- Eine Rückfrage, bei der du nicht weißt, wohin der Nutzer will: "nachfragen" mit einem kurzen, freundlichen Hinweis, was du brauchst.
+- "konversation" nur fuer Smalltalk und Rueckmeldungen, die mit keinem Sachbereich zu tun haben.
 ${dateiRegeln}
-- Im Zweifel "konversation" mit niedriger confidence.
 
-BEISPIELE (so wird entschieden):
-"gib mir den aktuellen Lagerbestand"      -> verarbeiten, lagerliste     (Bestand als Liste/Datei)
-"wie viele Stahlbögen DN50 haben wir?"    -> verarbeiten, lagerauskunft  (eine gezielte Frage)
-"füge 5 Stahlbögen DN50 dem Lager hinzu"  -> verarbeiten, lager          (Buchung)
-"reservier mir 4 Magna3 Pumpen"           -> verarbeiten, lager          (Buchung)
-"bestell 20m Kupferrohr bei der GC"       -> verarbeiten, bestellung
-"ich brauche eine Anleitung für die X"    -> verarbeiten, recherche
-"Aufmaß 26-0111, 12m Kupferrohr verlegt"  -> verarbeiten, materialaufmass
-"danke, passt so"                         -> konversation
-Merke: Fragen und Wünsche rund um Bestand, Material oder Baustelle gehören fast
-immer zu einem Experten. "konversation" ist für Smalltalk und Rückmeldungen.
+(3) Robuster Umgang mit kaputten Eingaben:
+- Auch unvollstaendige Saetze ("DN20", "1m", "gebraucht"), einzelne Worte ("passt") oder offensichtlich verlegte Worte ("3 Pressfittings Edelstahl 28mm neu" als dritte Zeile nach Einlager-Anweisungen) gehoeren in den richtigen Faden — lies den Verlauf, nicht die Heuristik.
+- Eine bewusste Aenderung des Themas ("ganz anderes Thema", "nebenbei", "zurueck zum Aufmass") startet ein neues Thema. Sonst nicht.
+- Du darfst auch bei subjektiv "schwierigen" Eingaben mutig entscheiden — der Nutzer kann jederzeit korrigieren. Lieber eine Entscheidung treffen und Hinweise geben als gar nichts entscheiden.
 
 FORMAT (genau so, eine Zeile):
 {"thema":"<themaId oder neu>","themaName":"<nur bei neu, 2-5 Wörter>","aktion":"<aktion>","experte":"<id oder null>","dok_typ":null,"hinweis":null,"confidence":0.0}`;
@@ -136,7 +126,8 @@ FORMAT (genau so, eine Zeile):
 // Zweiter Versuch, falls die erste Antwort leer blieb: minimal, damit auch ein
 // Reasoning-Modell mit knappem Budget zum Ergebnis kommt.
 function baueKurzPrompt({ themenBlock, expertenBlock }) {
-  return `Router. Antworte NUR mit einem JSON-Objekt, ohne Nachdenken davor.
+  return `Router eines SHK-Bots. Antworte NUR mit einem JSON-Objekt, ohne Nachdenken davor.
+Strikt KI-basiert entscheiden, keine Schluesselwoerter. Im Zweifel "nachfragen" waehlen.
 
 Themen:
 ${themenBlock}
@@ -351,8 +342,12 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
     }
   }
 
-  if (confidence < SCHWELLEN.ROUTER_CONFIDENCE) {
-    return ergebnis({ themaId, themaName: parsed.themaName || leiteThemaNamenAb(text), hinweis: `Confidence zu niedrig (${confidence})`, confidence });
+  // Keine harte Confidence-Schwelle mehr. Wenn die KI eine Entscheidung
+  // trifft, wird sie verwendet — der Nutzer kann sie in der Folgenachricht
+  // korrigieren. Lieber eine fragwürdige Entscheidung treffen als den Nutzer
+  // hängen lassen.
+  if (typeof confidence !== 'number') {
+    melde(`Router-Confidence fehlt, Entscheidung wird trotzdem verwendet: ${parsed.aktion}/${experte || '-'}`);
   }
 
   return ergebnis({

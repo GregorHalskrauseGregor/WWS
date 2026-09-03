@@ -32,15 +32,19 @@ module.exports = {
   beschreibung: 'Beantwortet Fragen zum Lagerbestand: was ist da, wie viel, in welchem Zustand, was ist reserviert. Ändert nichts.',
 
   zustaendigWenn:
-    'Der Nutzer will den LAGERBESTAND WISSEN oder NACHGUCKEN, ohne zu buchen: ' +
-    '"was haben wir noch", "wie viel X ist da", "hab ich genug Y", "zeig mir alles in DN70", ' +
-    '"ist das reserviert", "ist X im Lager", "gibt es X", "such im Lager nach X", ' +
-    '"schau im Material nach", "guck mal im Bestand", "haben wir X auf Lager", ' +
-    '"X müsste doch da sein", "warum ist X nicht da". ' +
-    'Auch Rückfragen wie "aber Kupferrohr 22mm ist doch im lager" — der Nutzer will, ' +
-    'dass du im Lager nachschaust, nicht im Internet. ' +
-    'NICHT gemeint: Ein- und Auslagern oder Reservieren (das ist Lager) und die ' +
-    'komplette Liste als Excel-Datei (das ist Lagerliste).',
+    'Der Nutzer will den Lagerbestand WISSEN oder im Lager NACHGUCKEN, ohne etwas ' +
+    'zu buchen. Eine konkrete Mengenfrage zu einem Artikel, eine Bestandsabfrage ' +
+    'zu mehreren Artikeln gleichzeitig, eine Suche nach einem bestimmten Material ' +
+    'im Bestand, die Frage, ob etwas reserviert ist oder ob noch genug da ist, ' +
+    'oder eine Rückfrage wie "X müsste doch da sein" / "ist X im Lager" — all ' +
+    'das beantwortet dieser Experte. Auch wenn der Nutzer mit dem Bot hadert ' +
+    '("aber Kupferrohr 22mm ist doch im Lager") und wissen will, ob die ' +
+    'Position existiert.\n' +
+    '\n' +
+    'NICHT hier: eine Buchung am Bestand (Lager), eine Bestandskorrektur an ' +
+    'einer Zeile (Lagerpflege) oder die ganze Liste als Datei (Lagerliste). ' +
+    'Auch NICHT: eine Frage, die nicht über den Bestand beantwortet werden ' +
+    'kann, etwa Preise oder technische Daten — das ist Recherche.',
 
   implementiert: true,
 

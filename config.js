@@ -16,9 +16,11 @@ const DATA = process.env.WWS_DATA
 
 // ---------------------------------------------------------------- Schwellen
 const SCHWELLEN = {
-  // Ab welcher Router-Konfidenz wird einer KI-Entscheidung gefolgt?
-  // Darunter: Standard-Chat, kein Experte. Lieber nichts als das Falsche.
-  ROUTER_CONFIDENCE: 0.6,
+  // Frueher: Confidence-Schwelle, unter der Router-Entscheidungen verworfen
+  // wurden. Jetzt abgeschafft: die KI entscheidet immer, der Nutzer kann
+  // in der Folgenachricht korrigieren. Konstante bleibt als historische
+  // Referenz, wird aber im Router nicht mehr ausgewertet.
+  ROUTER_CONFIDENCE: 0.0,
 
   // Rollende Zusammenfassung: ab so vielen Nachrichten wird verdichtet,
   // dabei werden die ältesten THEMA_BLOCK Nachrichten zusammengefasst.

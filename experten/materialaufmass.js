@@ -105,9 +105,16 @@ module.exports = {
   beschreibung: 'Erfasst ein Materialaufmaß (Projekt, Bauvorhaben, Positionen) und erzeugt daraus das ausgefüllte Aufmaß-PDF.',
 
   zustaendigWenn:
-    'Der Nutzer will erfassen, was auf einer Baustelle verbaut/verlegt/montiert wurde, ' +
-    'ein Aufmaß oder eine Mengenermittlung anlegen oder ergänzen, oder ein Aufmaß-PDF erzeugen. ' +
-    'Auch: Korrekturen und Ergänzungen an einem laufenden Aufmaß.',
+    'Der Nutzer will erfassen, was auf einer Baustelle tatsächlich verbaut, ' +
+    'verlegt oder montiert wurde — ein Aufmaß, eine Mengenermittlung, die ' +
+    'Rechnung über das, was verbraucht wurde. Gehört alles hierher, was ' +
+    'einem konkreten Bauvorhaben (Projekt, Baustelle, Auftrag) zugeordnet ' +
+    'ist und am Ende als Aufmaß-PDF oder Mengenliste herauskommen soll.\n' +
+    '\n' +
+    'Auch Korrekturen und Ergänzungen an einem laufenden Aufmaß fallen hier ' +
+    'rein. NICHT hier: reines Einlagern oder Entnehmen ohne Projektbezug ' +
+    '(Lager), reine Fragen zum Bestand (Lagerauskunft) und allgemeine ' +
+    'Wissensfragen (Recherche).',
 
   implementiert: true,
 

@@ -68,14 +68,15 @@ module.exports = {
   beschreibung: 'Korrigiert bestehende Lagerzeilen: Inventurbestand absolut setzen, umbenennen, Kategorie oder Einheit richtigstellen, Dubletten zusammenführen.',
 
   zustaendigWenn:
-    'Der Nutzer will eine bestehende Lagerzeile BERICHTIGEN, nicht verrechnen:\n' +
-    '  "sind eigentlich 12, nicht 15", "Inventur ergab 30" -> Bestand absolut setzen\n' +
-    '  "die Position heißt falsch", "benenne X in Y um"    -> umbenennen\n' +
-    '  "X gehört in die Kategorie Y"                        -> Kategorie ändern\n' +
-    '  "das ist in Metern, nicht Stück"                     -> Einheit ändern\n' +
-    '  "X und Y sind dasselbe", "doppelt angelegt"          -> zusammenführen\n' +
-    'NICHT gemeint: normales Ein- und Auslagern oder Reservieren (das ist Lager) — ' +
-    'dort wird verrechnet, hier wird richtiggestellt.',
+    'Der Nutzer will eine bestehende Lagerzeile BERICHTIGEN, ohne dass der ' +
+    'Bestand verrechnet wird. Anlässe sind Inventur (eine Position hat ' +
+    'einen anderen Bestand, als der Bot glaubt), falsche Bezeichnung, ' +
+    'falsche Kategorie, falsche Einheit, oder zwei versehentlich getrennt ' +
+    'angelegte Zeilen, die zusammengehören.\n' +
+    '\n' +
+    'NICHT hier: normales Ein- und Auslagern oder Reservieren (das ist Lager) — ' +
+    'dort wird verrechnet, hier wird richtiggestellt. Auch keine bloße Frage, ' +
+    'was in einer Position steht (Lagerauskunft).',
 
   implementiert: true,
 

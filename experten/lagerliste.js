@@ -41,10 +41,13 @@ module.exports = {
   beschreibung: 'Schickt den kompletten Lagerbestand als aufbereitete Excel-Datei, nach Kategorien gegliedert.',
 
   zustaendigWenn:
-    'Der Nutzer will den Lagerbestand als DATEI oder LISTE bekommen: "schick mir die Lagerliste", ' +
-    '"Bestandsliste als Excel", "exportier das Lager", "gib mir eine Übersicht als Tabelle". ' +
-    'NICHT gemeint: eine einzelne Bestandsfrage wie "wie viel DN70 haben wir" (das ist Lagerauskunft) ' +
-    'und keine Buchung.',
+    'Der Nutzer will den kompletten Lagerbestand als DATEI haben — als Excel, ' +
+    'PDF, Übersichtstabelle oder strukturierte Liste, die er weitergeben oder ' +
+    'ausdrucken kann. Hierher gehört alles, was nach "schick mir die Liste", ' +
+    '"Bestandsliste", "exportieren", "Übersicht als Datei" klingt.\n' +
+    '\n' +
+    'NICHT hier: eine einzelne Bestandsfrage zu einem konkreten Artikel ' +
+    '(Lagerauskunft) und keine Buchung am Bestand (Lager).',
 
   implementiert: true,
 

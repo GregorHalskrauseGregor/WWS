@@ -17,10 +17,11 @@ module.exports = {
   beschreibung: 'Erstellt eine Materialbestellung (Lieferant, Baustelle, Positionen, Liefertermin) als PDF und prüft dabei den Lagerbestand.',
 
   zustaendigWenn:
-    'Der Nutzer will Material BESTELLEN oder nachbestellen: beim Großhändler ordern, ' +
-    'eine Bestellliste aufgeben, "besorg mir", "bestell", "nachbestellen". ' +
-    'NICHT gemeint sind Fragen nach dem vorhandenen Bestand (das ist Lagerauskunft) ' +
-    'und auch nicht "ich brauche eine Anleitung" (das ist Recherche).',
+    'Der Nutzer will Material beim Großhändler bestellen — also Waren von außen ins ' +
+    'Lager holen, die noch nicht da sind. Das schließt den Lieferanten, die Baustelle, ' +
+    'die Positionen mit Menge und den Liefertermin ein. Wenn der Nutzer nur "ich brauche X" ' +
+    'sagt, ohne eine Bestellung aufzugeben, ist das eine Lagerauskunft oder ein Lager-' +
+    'Vorgang, nicht dieser Experte.',
 
   implementiert: true,
 

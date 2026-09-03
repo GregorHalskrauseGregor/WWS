@@ -11,10 +11,15 @@ module.exports = {
   beschreibung: 'Sucht im Internet nach Fakten, Anleitungen, Produkten, Preisen und technischen Daten und nennt die Quellen.',
 
   zustaendigWenn:
-    'Der Nutzer will etwas WISSEN, das aktuelle oder nachschlagbare Information ist: ' +
-    'eine Anleitung, ein Datenblatt, ein Preis, eine technische Angabe, eine Adresse, ' +
-    'eine Nachricht, oder er nennt eine konkrete URL zum Nachlesen. ' +
-    'Auch wenn er nur "brauche eine Anleitung für X" sagt.',
+    'Der Nutzer will etwas WISSEN, das eine aktuelle oder nachschlagbare ' +
+    'Information ist: eine Anleitung, ein Datenblatt, ein Preis, eine technische ' +
+    'Angabe, eine Adresse, eine Nachricht, oder er nennt eine konkrete URL zum ' +
+    'Nachlesen. Auch wenn er eine Anleitung für ein Material braucht, das im ' +
+    'Lager gar nicht die Frage ist.\n' +
+    '\n' +
+    'NICHT hier: jede Frage, die der eigene Bestand beantworten kann ' +
+    '(Lagerauskunft) — der Nutzer will nicht das Internet, sondern den ' +
+    'eigenen Bestand sehen. Auch keine Buchung am Lager.',
 
   implementiert: true,
 

@@ -120,15 +120,22 @@ module.exports = {
   beschreibung: 'Bucht Material ins Lager ein und wieder aus, und merkt Material für dich vor. Schreibt jede Buchung in die Lagerdatei.',
 
   zustaendigWenn:
-    'Der Nutzer will den LAGERBESTAND ÄNDERN oder Material vormerken:\n' +
-    '  einlagern — "füge X hinzu", "kommt ins Lager", "Wareneingang", "Rückgabe", "übrig geblieben", "ich habe X", "lagere X ein"\n' +
-    '  entnehmen — "nimm X raus", "entnehme", "verbraucht", "vom Lager geholt", "ich benötige X", "ich brauche X", "X vom Lager", "hole X"\n' +
-    '  reservieren — "reservier mir", "leg X zurück", "merk X vor", "brauche ich nächste Woche", "halt X zurück"\n' +
-    '  freigeben — "Reservierung aufheben", "brauche das doch nicht"\n' +
-    'NICHT gemeint: reine Fragen nach dem Bestand ohne Buchung (das ist Lagerauskunft), ' +
-    'die Lagerliste als Datei (das ist Lagerliste), das Aufmaß einer Baustelle ' +
-    '(das ist Materialaufmaß und ändert den Lagerbestand nicht), Bestellungen beim Großhändler ' +
-    'und allgemeine Preisfragen (das ist Recherche).',
+    'Der Nutzer will den Lagerbestand tatsächlich VERÄNDERN: Ware einlagern (etwas ' +
+    'Neues kommt dazu), Ware entnehmen (etwas wird rausgenommen, verbraucht, gebraucht, ' +
+    'weggegeben), Ware für sich oder andere reservieren (vormerken für später) oder ' +
+    'eine bestehende Reservierung wieder freigeben. Der Antrieb ist immer eine echte ' +
+    'Buchung — etwas verändert sich am Bestand.\n' +
+    '\n' +
+    'Anlässe: Wareneingang, Lieferung, Rückgabe, Verbrauch, Baustellenmaterial, das ' +
+    'mitgenommen oder verbraucht wird, ein Kollege, der sich was zurücklegt, oder ' +
+    'eine Reservierung, die nicht mehr gebraucht wird.\n' +
+    '\n' +
+    'NICHT hier: eine reine Frage, was im Lager ist (Lagerauskunft), der Wunsch, ' +
+    'die ganze Liste als Datei zu bekommen (Lagerliste), eine Bestandskorrektur an ' +
+    'einer bereits existierenden Zeile (Lagerpflege), das Aufmaß einer Baustelle, ' +
+    'das den Bestand gar nicht anrührt (Materialaufmaß), eine Bestellung beim ' +
+    'Großhändler (Bestellung) oder eine allgemeine Frage, etwa nach Preisen ' +
+    '(Recherche).',
 
   implementiert: true,
 

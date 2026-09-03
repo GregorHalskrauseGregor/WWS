@@ -123,11 +123,34 @@ async function schicke(text, routing, ops) {
   pruefe('Vorgang verworfen', () => assert.equal(vorgang.lade(CHAT, thema2), null));
 
   console.log('\n── Router unsicher -> normaler Chat, kein Experte ──');
+  // Auch bei niedriger Confidence wird die KI-Entscheidung akzeptiert. Hier
+  // wählt die KI explizit "konversation" (kein Sachthema), also kein Vorgang.
+  // thema1 ist zwischenzeitlich abgeschlossen (Vorgang oben bestätigt), also
+  // auch da nichts zu erwarten.
   const chat = await schicke('was meinst du dazu?',
-    { thema: thema1, aktion: 'verarbeiten', experte: 'materialaufmass', confidence: 0.2 }, { ops: [] });
-  pruefe('kein Vorgang angelegt', () => {
+    { thema: thema1, aktion: 'konversation', confidence: 0.4 }, { ops: [] });
+  pruefe('kein neuer Vorgang angelegt', () => {
     assert.equal(chat.text, 'Standardantwort.');
-    assert.equal(vorgang.lade(CHAT, thema1), null);
+    assert.equal(vorgang.lade(CHAT, thema1), null, 'alter Vorgang war schon abgeschlossen');
+  });
+
+  console.log('\n── KI entscheidet mutig auch bei niedriger Confidence ──');
+  // Vorher: unter 0.6 wurde die Entscheidung verworfen. Jetzt: gilt.
+  // Der Vorgang wird auch bei confidence 0.25 eröffnet, der Nutzer kann in
+  // einer Folgenachricht korrigieren.
+  const mutig = await schicke('3 Pressfittings Edelstahl 28mm',
+    { thema: 'neu', themaName: 'Pressfittings', aktion: 'verarbeiten', experte: 'lager', confidence: 0.25 },
+    { ops: [
+      { op: 'setze', feld: 'richtung', wert: 'einlagern' },
+      { op: 'liste_hinzu', feld: 'positionen', wert: { menge: 3, einheit: 'Stk.', bezeichnung: 'Pressfitting Edelstahl 28mm' } }
+    ] });
+  pruefe('Vorgang wurde trotz niedriger Confidence angelegt', () => {
+    assert.match(mutig.text, /Lager/, 'lager-Experte wurde aktiviert');
+    // Sammelt-Status oder Bestätigungs-Aufforderung — Hauptsache, es wurde
+    // nicht zur konversation zurückgefallen.
+    const v = vorgang.lade(CHAT, mutig.themaId);
+    assert(v, 'Vorgang existiert');
+    assert.equal(v.experteId, 'lager', 'Experte lager');
   });
 
   console.log('\n── Verlauf wurde geschrieben ──');

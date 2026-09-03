@@ -150,12 +150,15 @@ pruefe('Pfad-Injection wird abgewehrt', () => {
 
 console.log('\n── Router-Validierung (Fake-Modell) ──');
 (async () => {
-  await pruefeAsync('niedrige Confidence -> konversation', async () => {
+  await pruefeAsync('niedrige Confidence wird trotzdem akzeptiert (keine Schwelle mehr)', async () => {
+    // Vorher: conf < 0.6 -> konversation. Jetzt: KI-Entscheidung gilt, der
+    // Nutzer korrigiert in der Folgenachricht, falls sie falsch war.
     const r = await router.entscheide({
       text: 'hallo', chatId: 999,
       chat: async () => '{"thema":"neu","themaName":"Test","aktion":"verarbeiten","experte":"materialaufmass","confidence":0.3}'
     });
-    assert.equal(r.aktion, 'konversation', 'Schwelle nicht angewendet');
+    assert.equal(r.aktion, 'verarbeiten', 'Entscheidung muss trotz niedriger Confidence gelten');
+    assert.equal(r.experte, 'materialaufmass');
   });
   await pruefeAsync('halluzinierter Experte wird verworfen', async () => {
     const r = await router.entscheide({
@@ -185,6 +188,15 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
     const r = await router.entscheide({ text: 'x', chatId: 999, chat: async () => 'ich bin ein Chatbot!' });
     assert.equal(r.aktion, 'konversation');
     assert.equal(r.confidence, 0);
+  });
+  await pruefeAsync('nachfragen ist eine gueltige Aktion und wird respektiert', async () => {
+    // Auch hier: KI-Entscheidung gilt, kein Schwellenwert.
+    const r = await router.entscheide({
+      text: 'das da', chatId: 999,
+      chat: async () => '{"thema":"neu","aktion":"nachfragen","hinweis":"Worauf beziehst du dich?","confidence":0.4}'
+    });
+    assert.equal(r.aktion, 'nachfragen');
+    assert.equal(r.hinweis, 'Worauf beziehst du dich?');
   });
 
   console.log('\n── Werkzeug-Registry ──');
