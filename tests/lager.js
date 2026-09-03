@@ -140,6 +140,134 @@ const bestandVon = async (bez) => {
     assert.deepEqual(namen, ['Pumpe Magna3', 'Rohrschelle M8']);
   });
 
+  console.log('\n── Zuordnung beim Buchen (darf nichts verwechseln) ──');
+  await pruefe('verschiedene Dimensionen bleiben getrennt', async () => {
+    await material.addierePositionen([
+      { bezeichnung: 'Winkel DN25', menge: 3 },
+      { bezeichnung: 'Winkel DN40', menge: 7 }
+    ], PFAD);
+    assert.equal(await bestandVon('Winkel DN25'), 3, 'DN40 wurde auf DN25 gebucht');
+    assert.equal(await bestandVon('Winkel DN40'), 7);
+  });
+  await pruefe('zusätzliches Merkmal ist eine eigene Position', async () => {
+    await material.addierePositionen([
+      { bezeichnung: 'Kugelhahn DN15', menge: 5 },
+      { bezeichnung: 'Kugelhahn DN15 Trinkwasser', menge: 2 }
+    ], PFAD);
+    assert.equal(await bestandVon('Kugelhahn DN15'), 5, 'Varianten verschmolzen');
+    assert.equal(await bestandVon('Kugelhahn DN15 Trinkwasser'), 2);
+  });
+  await pruefe('Schreibweise und Wortstellung treffen dieselbe Zeile', async () => {
+    await material.addierePositionen([{ bezeichnung: 'kugelhahn  dn 15', menge: 1 }], PFAD);
+    assert.equal(await bestandVon('Kugelhahn DN15'), 6, 'Schreibvariante legte neue Zeile an');
+    await material.addierePositionen([{ bezeichnung: 'DN15 Kugelhahn', menge: 1 }], PFAD);
+    assert.equal(await bestandVon('Kugelhahn DN15'), 7, 'Wortstellung legte neue Zeile an');
+  });
+  await pruefe('Maßeinheit am Zahlwert ist egal', async () => {
+    await material.addierePositionen([{ bezeichnung: 'Kupferrohr 22mm', menge: 10, einheit: 'm' }], PFAD);
+    await material.addierePositionen([{ bezeichnung: 'Kupferrohr 22 mm', menge: 5, einheit: 'm' }], PFAD);
+    assert.equal(await bestandVon('Kupferrohr 22mm'), 15, '"22 mm" traf nicht "22mm"');
+  });
+  await pruefe('Entnahme trifft nicht die Nachbardimension', async () => {
+    const r = await material.entnehmePositionen([{ bezeichnung: 'Winkel DN40', menge: 2 }], PFAD, ICH);
+    assert.equal(r[0].bezeichnung, 'Winkel DN40');
+    assert.equal(await bestandVon('Winkel DN25'), 3, 'falsche Zeile belastet');
+  });
+  pruefe('Kennzahlen und Wortmenge sind normalisiert', () => {
+    const n = material.normalisiereFuerVergleich;
+    assert.equal(n('Winkel DN 25'), n('winkel dn25'));
+    assert.equal(n('Kupferrohr 22 mm'), n('kupferrohr 22mm'));
+    assert.equal(material.kennzahlen(n('Winkel DN25')), 'dn25');
+    assert.notEqual(material.kennzahlen(n('Winkel DN25')), material.kennzahlen(n('Winkel DN40')));
+    assert.equal(material.wortmenge(n('DN15 Kugelhahn')), material.wortmenge(n('Kugelhahn DN15')));
+  });
+
+  console.log('\n── Korrektur: Bestand absolut setzen (Inventur) ──');
+  await pruefe('setzt den Wert, statt zu verrechnen', async () => {
+    await material.addierePositionen([{ bezeichnung: 'Muffe DN32', menge: 15 }], PFAD);
+    const r = await material.setzeBestand([{ position: 'Muffe DN32', wert: 12 }], PFAD);
+    assert.equal(r[0].vorherSpalte, 15);
+    assert.equal(r[0].nachherSpalte, 12);
+    assert.equal(await bestandVon('Muffe DN32'), 12);
+  });
+  await pruefe('negativer Wert wird abgelehnt', async () => {
+    const r = await material.setzeBestand([{ position: 'Muffe DN32', wert: -5 }], PFAD);
+    assert.equal(r[0].abgelehnt, true);
+    assert.equal(await bestandVon('Muffe DN32'), 12, 'Bestand trotzdem geaendert');
+  });
+  await pruefe('nur der genannte Zustand wird gesetzt', async () => {
+    await material.addierePositionen([{ bezeichnung: 'Muffe DN32', menge: 4, zustand: 'gebraucht' }], PFAD);
+    await material.setzeBestand([{ position: 'Muffe DN32', wert: 20, zustand: 'neu' }], PFAD);
+    const p = material.findePosition(await material.leseAlle(PFAD), 'Muffe DN32');
+    assert.equal(p.mengeNeu, 20);
+    assert.equal(p.mengeGebraucht, 4, 'anderer Zustand wurde mitgeaendert');
+  });
+  await pruefe('Korrektur unter die Reservierung wird gemeldet', async () => {
+    await material.reservierePositionen([{ bezeichnung: 'Muffe DN32', menge: 10 }], PFAD, ANDERE);
+    const r = await material.setzeBestand([
+      { position: 'Muffe DN32', wert: 2, zustand: 'neu' },
+      { position: 'Muffe DN32', wert: 0, zustand: 'gebraucht' }
+    ], PFAD);
+    assert(r[1].reservierungUeberschritten > 0, 'stille Ueberbuchung der Vormerkung');
+  });
+  await pruefe('unbekannte Position wird gemeldet, nicht angelegt', async () => {
+    const vorher = (await material.leseAlle(PFAD)).length;
+    const r = await material.setzeBestand([{ position: 'Gibtsnicht', wert: 5 }], PFAD);
+    assert.equal(r[0].unbekannt, true);
+    assert.equal((await material.leseAlle(PFAD)).length, vorher);
+  });
+
+  console.log('\n── Korrektur: Stammdaten ──');
+  await pruefe('umbenennen', async () => {
+    const r = await material.benenneUm([{ position: 'Muffe DN32', wert: 'Muffe DN32 verzinkt' }], PFAD);
+    assert.equal(r[0].nachher, 'Muffe DN32 verzinkt');
+    assert(material.findePosition(await material.leseAlle(PFAD), 'Muffe DN32 verzinkt'));
+  });
+  await pruefe('Umbenennen auf einen belegten Namen wird abgelehnt', async () => {
+    await material.addierePositionen([{ bezeichnung: 'Winkel DN25' }, { bezeichnung: 'Winkel DN40' }]
+      .map((x) => ({ ...x, menge: 1 })), PFAD);
+    const r = await material.benenneUm([{ position: 'Winkel DN25', wert: 'Winkel DN40' }], PFAD);
+    assert.equal(r[0].abgelehnt, true);
+    assert.match(r[0].meldung, /zusammen/);
+  });
+  await pruefe('Kategorie nur aus der festen Liste', async () => {
+    const gut = await material.setzeKategorie([{ position: 'Winkel DN25', wert: 'Fittinge & Verbindungstechnik' }], PFAD);
+    assert.equal(gut[0].nachher, 'Fittinge & Verbindungstechnik');
+    const schlecht = await material.setzeKategorie([{ position: 'Winkel DN25', wert: 'Krimskrams' }], PFAD);
+    assert.equal(schlecht[0].abgelehnt, true);
+  });
+  await pruefe('Einheit ändern', async () => {
+    const r = await material.setzeEinheit([{ position: 'Winkel DN25', wert: 'm' }], PFAD);
+    assert.equal(r[0].nachher, 'm');
+  });
+
+  console.log('\n── Korrektur: Dubletten zusammenführen ──');
+  await pruefe('Mengen und Vormerkungen wandern ins Ziel', async () => {
+    await material.addierePositionen([
+      { bezeichnung: 'T-Stueck DN20', menge: 6 },
+      { bezeichnung: 'T Stueck DN 20 alt', menge: 4 }
+    ], PFAD);
+    await material.reservierePositionen([{ bezeichnung: 'T Stueck DN 20 alt', menge: 2 }], PFAD, ICH);
+    const r = await material.fuehreZusammen([{ position: 'T Stueck DN 20 alt', wert: 'T-Stueck DN20' }], PFAD);
+    assert.equal(r[0].uebernommen, 4);
+    assert.equal(r[0].zielBestand, 10);
+    const ziel = material.findePosition(await material.leseAlle(PFAD), 'T-Stueck DN20');
+    assert.equal(material.reserviertVon(ziel, ICH), 2, 'Vormerkung ging verloren');
+  });
+  await pruefe('die alte Zeile bleibt stehen, wird aber nicht mehr gefunden', async () => {
+    const alle = await material.leseAlle(PFAD);
+    const tot = alle.find((x) => x.bezeichnung.includes('[zusammengeführt]'));
+    assert(tot, 'Zeile wurde geloescht');
+    assert.equal(material.gesamtbestand(tot), 0);
+    const gesucht = material.findePosition(alle, 'T Stueck DN 20 alt');
+    assert(!gesucht || !gesucht.bezeichnung.includes('[zusammengeführt]'),
+      'tote Zeile taucht wieder als Treffer auf');
+  });
+  await pruefe('Zusammenführen mit sich selbst wird abgelehnt', async () => {
+    const r = await material.fuehreZusammen([{ position: 'T-Stueck DN20', wert: 'T-Stueck DN20' }], PFAD);
+    assert.equal(r[0].abgelehnt, true);
+  });
+
   console.log('\n── Suchen und Bedarf (ohne Buchung) ──');
   await pruefe('Suche verändert nichts', async () => {
     const vorher = await bestandVon('Pumpe Magna3');

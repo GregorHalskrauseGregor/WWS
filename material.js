@@ -29,35 +29,65 @@ function spalteFuerZustand(zustand) {
   return 'mengeNeu';
 }
 
-// "DN 20" = "DN20" = "DN-20"; Mehrfach-Leerzeichen weg, alles klein.
+// "DN 20" = "DN20" = "DN-20", "22 mm" = "22mm"; alles klein, Trennzeichen weg.
 function normalisiereFuerVergleich(s) {
   if (!s) return '';
   return String(s).toLowerCase()
     .replace(/[\s\-_]+/g, ' ')
     .replace(/dn\s*(\d+)/g, 'dn$1')
+    .replace(/(\d)\s*(mm|cm|zoll|"|″)/g, '$1$2')  // 22 mm -> 22mm
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+// Alle Tokens mit einer Ziffer — also Dimensionen, Größen, Typnummern.
+// Genau daran unterscheiden sich zwei Artikel, die sonst gleich heißen:
+// "Winkel DN25" und "Winkel DN40" teilen sich das Wort, nicht die Kennzahl.
+function kennzahlen(norm) {
+  return norm.split(' ').filter((t) => /\d/.test(t)).sort().join(' ');
+}
+
+// Die Woerter ohne Ziffern, als Menge — damit ist die Reihenfolge egal,
+// ein zusaetzliches Wort aber nicht.
+function wortmenge(norm) {
+  return [...new Set(norm.split(' ').filter((t) => t && !/\d/.test(t)))].sort().join(' ');
+}
+
 // Dreistufig: exakt -> enthält -> Token-Überschneidung.
-function findePosition(positionen, suchbegriff) {
+// Findet die EINE Zeile, auf die gebucht werden soll.
+//
+// Bewusst streng: ein Fehlgriff bucht Material auf den falschen Artikel, und das
+// faellt erst auf, wenn jemand vor dem Regal steht. Frueher genuegte EIN
+// gemeinsames Wort — damit landete "Winkel DN40" auf der Zeile "Winkel DN25".
+// Jetzt muessen die Kennzahlen (Dimensionen, Groessen) uebereinstimmen.
+// Fuer die reine Suche gibt es suchePositionen(), das darf unscharf sein.
+function findePosition(alle, suchbegriff) {
   const norm = normalisiereFuerVergleich(suchbegriff);
   if (!norm) return null;
+
+  // Zusammengefuehrte Altzeilen bleiben in der Liste, treten aber nicht mehr
+  // als Treffer auf — sonst bucht man auf die tote Zeile.
+  const positionen = alle.filter((p) => !String(p.bezeichnung || '').endsWith(' [zusammengeführt]'));
+  const suchKennzahlen = kennzahlen(norm);
+
+  // 1) exakt
   for (const p of positionen) {
     if (normalisiereFuerVergleich(p.bezeichnung) === norm) return p;
   }
+  // 2) gleiche Wortmenge UND gleiche Kennzahlen — deckt andere Wortstellung ab,
+  //    ohne verschiedene Artikel zu verschmelzen.
+  //
+  // BEWUSST STRENG: "Stahlbogen DN50 verzinkt" ist nicht dasselbe wie
+  // "Stahlbogen DN50". Ob zwei Varianten zusammengehoeren, ist eine fachliche
+  // Frage (Zulassung, Presssystem, Marke) und keine, die eine Textaehnlichkeit
+  // beantworten kann. Lieber eine Zeile zu viel als still zusammengebuchtes
+  // Material — die fachliche Zusammenfassung kommt ueber die Wissensbasis.
+  const suchWorte = wortmenge(norm);
   for (const p of positionen) {
-    if (normalisiereFuerVergleich(p.bezeichnung).includes(norm)) return p;
+    const pNorm = normalisiereFuerVergleich(p.bezeichnung);
+    if (kennzahlen(pNorm) === suchKennzahlen && wortmenge(pNorm) === suchWorte) return p;
   }
-  const suchTokens = norm.split(' ').filter((t) => t.length >= 3);
-  let bester = null;
-  let beste = 0;
-  for (const p of positionen) {
-    const pTokens = normalisiereFuerVergleich(p.bezeichnung).split(' ').filter((t) => t.length >= 3);
-    const treffer = suchTokens.filter((t) => pTokens.includes(t)).length;
-    if (treffer > beste) { beste = treffer; bester = p; }
-  }
-  return beste > 0 ? bester : null;
+  return null;
 }
 
 // ────────────────────────────────────────────────────────── Bestand & Reservierung
@@ -301,6 +331,169 @@ function reservierungenVon(positionen, chatId) {
     .filter((r) => r.menge > 0);
 }
 
+// ──────────────────────────────────────────────────── Korrektur & Stammdaten
+//
+// Alles hier ändert bestehende Zeilen statt zu addieren. Auch hier gilt: es
+// wird nie eine Zeile entfernt. Eine zusammengeführte Zeile bleibt mit Bestand 0
+// stehen und wird nur so umbenannt, dass sie bei der Suche nicht mehr mit der
+// aktiven Zeile konkurriert — der Verlauf bleibt damit nachvollziehbar.
+
+const ZUSAMMENGEFUEHRT = ' [zusammengeführt]';
+
+function findeOderMelde(bestand, bezeichnung, ergebnisse) {
+  const p = findePosition(bestand, bezeichnung);
+  if (!p) {
+    ergebnisse.push({ bezeichnung, unbekannt: true, meldung: 'Position nicht gefunden.' });
+    return null;
+  }
+  return p;
+}
+
+// Inventur: setzt den Bestand auf einen ABSOLUTEN Wert, statt zu verrechnen.
+async function setzeBestand(korrekturen, pfad = libExcel.MATERIAL_PFAD) {
+  const bestand = await ladeAlle(pfad);
+  const ergebnisse = [];
+  let geaendert = false;
+
+  for (const k of korrekturen || []) {
+    const bezeichnung = k && (k.position || k.bezeichnung);
+    if (!bezeichnung) continue;
+    const p = findeOderMelde(bestand, bezeichnung, ergebnisse);
+    if (!p) continue;
+
+    const neu = sichereZahl(k.wert !== undefined ? k.wert : k.menge);
+    if (neu < 0) {
+      ergebnisse.push({ bezeichnung: p.bezeichnung, abgelehnt: true,
+        meldung: 'Ein Bestand kann nicht negativ sein.' });
+      continue;
+    }
+    const spalte = spalteFuerZustand(k.zustand);
+    const vorherSpalte = sichereZahl(p[spalte]);
+    const vorherGesamt = gesamtbestand(p);
+    p[spalte] = neu;
+    geaendert = true;
+
+    // Nach unten korrigieren kann Vormerkungen ungültig machen — das muss auffallen.
+    const jetzt = gesamtbestand(p);
+    const vorgemerkt = reserviertGesamt(p);
+    ergebnisse.push({
+      bezeichnung: p.bezeichnung, einheit: p.einheit,
+      zustand: k.zustand || 'neu',
+      vorherSpalte, nachherSpalte: neu,
+      vorherGesamt, nachherGesamt: jetzt,
+      andereZustaende: jetzt - neu,
+      reservierungUeberschritten: vorgemerkt > jetzt ? vorgemerkt - jetzt : 0,
+      unbekannt: false
+    });
+  }
+
+  if (geaendert) await speichereAlle(pfad, bestand);
+  return ergebnisse;
+}
+
+// Gemeinsamer Rahmen für die Stammdaten-Änderungen (Name, Kategorie, Einheit).
+async function aendereStammdaten(korrekturen, pfad, feld, pruefe) {
+  const bestand = await ladeAlle(pfad);
+  const ergebnisse = [];
+  let geaendert = false;
+
+  for (const k of korrekturen || []) {
+    const bezeichnung = k && (k.position || k.bezeichnung);
+    const wert = String(k && k.wert !== undefined ? k.wert : '').trim();
+    if (!bezeichnung || !wert) continue;
+    const p = findeOderMelde(bestand, bezeichnung, ergebnisse);
+    if (!p) continue;
+
+    const fehler = pruefe ? pruefe(wert, bestand, p) : null;
+    if (fehler) {
+      ergebnisse.push({ bezeichnung: p.bezeichnung, abgelehnt: true, meldung: fehler });
+      continue;
+    }
+    const vorher = p[feld];
+    if (vorher === wert) {
+      ergebnisse.push({ bezeichnung: p.bezeichnung, unveraendert: true, wert });
+      continue;
+    }
+    p[feld] = wert;
+    geaendert = true;
+    ergebnisse.push({ bezeichnung: p.bezeichnung, feld, vorher, nachher: wert, unbekannt: false });
+  }
+
+  if (geaendert) await speichereAlle(pfad, bestand);
+  return ergebnisse;
+}
+
+async function benenneUm(korrekturen, pfad = libExcel.MATERIAL_PFAD) {
+  return aendereStammdaten(korrekturen, pfad, 'bezeichnung', (wert, bestand, p) => {
+    const konflikt = bestand.find((x) => x !== p &&
+      normalisiereFuerVergleich(x.bezeichnung) === normalisiereFuerVergleich(wert));
+    return konflikt
+      ? `Es gibt bereits eine Position "${konflikt.bezeichnung}". Führ die beiden lieber zusammen.`
+      : null;
+  });
+}
+
+async function setzeKategorie(korrekturen, pfad = libExcel.MATERIAL_PFAD) {
+  return aendereStammdaten(korrekturen, pfad, 'kategorie', (wert) =>
+    KATEGORIEN.includes(wert) ? null
+      : `"${wert}" ist keine der festen Kategorien. Möglich: ${KATEGORIEN.join(', ')}`);
+}
+
+async function setzeEinheit(korrekturen, pfad = libExcel.MATERIAL_PFAD) {
+  return aendereStammdaten(korrekturen, pfad, 'einheit', null);
+}
+
+// Zwei versehentlich doppelt angelegte Zeilen zu einer machen.
+async function fuehreZusammen(korrekturen, pfad = libExcel.MATERIAL_PFAD) {
+  const bestand = await ladeAlle(pfad);
+  const ergebnisse = [];
+  let geaendert = false;
+
+  for (const k of korrekturen || []) {
+    const quelleName = k && (k.position || k.bezeichnung);
+    const zielName = String(k && k.wert !== undefined ? k.wert : '').trim();
+    if (!quelleName || !zielName) continue;
+
+    const quelle = findeOderMelde(bestand, quelleName, ergebnisse);
+    if (!quelle) continue;
+    const ziel = findePosition(bestand, zielName);
+    if (!ziel) {
+      ergebnisse.push({ bezeichnung: zielName, unbekannt: true,
+        meldung: 'Zielposition nicht gefunden.' });
+      continue;
+    }
+    if (ziel === quelle) {
+      ergebnisse.push({ bezeichnung: quelle.bezeichnung, abgelehnt: true,
+        meldung: 'Quelle und Ziel sind dieselbe Position.' });
+      continue;
+    }
+
+    const uebernommen = gesamtbestand(quelle);
+    for (const z of ZUSTAENDE) {
+      ziel[z] = sichereZahl(ziel[z]) + sichereZahl(quelle[z]);
+      quelle[z] = 0;
+    }
+    // Vormerkungen wandern mit, je Person zusammengezählt.
+    for (const r of quelle.reservierungen || []) {
+      setzeReservierung(ziel, r.chatId, reserviertVon(ziel, r.chatId) + sichereZahl(r.menge));
+    }
+    quelle.reservierungen = [];
+    // Zeile bleibt stehen, tritt aber nicht mehr als Treffer auf.
+    if (!quelle.bezeichnung.endsWith(ZUSAMMENGEFUEHRT)) {
+      quelle.bezeichnung = quelle.bezeichnung + ZUSAMMENGEFUEHRT;
+    }
+    geaendert = true;
+
+    ergebnisse.push({
+      bezeichnung: quelle.bezeichnung, ziel: ziel.bezeichnung, einheit: ziel.einheit,
+      uebernommen, zielBestand: gesamtbestand(ziel), unbekannt: false
+    });
+  }
+
+  if (geaendert) await speichereAlle(pfad, bestand);
+  return ergebnisse;
+}
+
 // ────────────────────────────────────────────────────────────── Lesen & Suchen
 
 function suchePositionen(suchbegriff, positionen) {
@@ -359,6 +552,11 @@ module.exports = {
   entnehmePositionen,
   reservierePositionen,
   gibReservierungFrei,
+  setzeBestand,
+  benenneUm,
+  setzeKategorie,
+  setzeEinheit,
+  fuehreZusammen,
   reservierungenVon,
   suchePositionen,
   pruefeBedarf,
@@ -366,6 +564,8 @@ module.exports = {
   leseAlle: ladeAlle,
   speichereAlle,
   normalisiereFuerVergleich,
+  kennzahlen,
+  wortmenge,
   findePosition,
   gesamtbestand,
   reserviertGesamt,
