@@ -9,7 +9,6 @@
 const material = require('../material');
 const { PFADE } = require('../config');
 const { KATEGORIEN } = require('../kategorien');
-const wissen = require('../lib/wissen');
 
 const AKTIONEN = {
   bestand_setzen: {
@@ -80,27 +79,8 @@ module.exports = {
 
   implementiert: true,
 
-  commands: [{
-    name: 'wissen',
-    beschreibung: 'Zeigt, was der Bot über SHK-Material weiß',
-    ausfuehren: async () => {
-      wissen.neuLaden();
-      const klassen = wissen.alleKlassen().filter((k) => k !== 'sonstiges');
-      const gelernt = wissen.gelernte();
-      const zeilen = [
-        '*Wissensbasis*  (Ordner `wissen/`, von Hand pflegbar)',
-        '',
-        `• ${klassen.length} Artikelarten: ${klassen.join(', ')}`,
-        '• Umgangssprache, Maßtabellen, Gebinde und Zulassungen',
-        '',
-        gelernt.length
-          ? `*Dazugelernt (${gelernt.length}):*\n` + gelernt.slice(-10).map((e) =>
-              `• ${e.von} → ${e.nach}  _(${e.am})_`).join('\n')
-          : '_Noch nichts dazugelernt. Der Bot fragt, bevor er sich etwas merkt._'
-      ];
-      return { text: zeilen.join('\n') };
-    }
-  }],
+  // Der frueher hier haengende /wissen-Befehl liegt jetzt bei experten/wissen.js,
+  // wo auch /addKnowledge und /addAllK sitzen.
 
   schema: {
     aktion: {

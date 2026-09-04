@@ -12,7 +12,6 @@ const material = require('../material');
 const libExcel = require('../lib/excel');
 const { PFADE } = require('../config');
 const { KATEGORIEN } = require('../kategorien');
-const wissen = require('../lib/wissen');
 
 const RICHTUNGEN = {
   einlagern: 'Bestand erhöhen',
@@ -23,36 +22,27 @@ const RICHTUNGEN = {
 
 function zeile(text) { return '• ' + text; }
 
-// Vor jeder Buchung: Gebinde aufloesen. Das ist Uebersetzung mit einer
-// richtigen Antwort, also Codesache — "1 Stange Schwarzrohr" sind 6 Meter.
+// Frueher stand hier eine deterministische Normalisierung: Artikelart raten,
+// Material aus der Bezeichnung erkennen, Gebinde in Meter umrechnen.
 //
-// Die BEZEICHNUNG bleibt dabei unangetastet. Sie ist die Beschriftung fuer
-// Menschen; was ein Artikel fachlich IST, gehoert in Merkmale (naechste Stufe).
-// Ein erkanntes Material wird deshalb nur gemeldet, nicht in den Namen
-// hineingeschrieben — sonst wuerde aus "Schwarzrohr DN50" ein "stahl DN50".
+// Das ist jetzt Sache der KI, die dafuer die Wissenskarten im Prompt hat. Grund:
+// Fachwissen als Code bedeutet, dass jede Ergaenzung ("eine Stange Kupfer sind
+// bei uns 5 m") eine Codeaenderung ist. Als Text in der Wissensbank kann Torsten
+// sie selbst schreiben.
+//
+// Sicher bleibt es, weil die Umrechnung nicht still passiert: die KI schreibt
+// beides in die Position — was gesagt wurde und was gebucht wird — und die
+// Bestaetigung zeigt es an, bevor irgendetwas in die Excel geht.
+//
+// Die BEZEICHNUNG bleibt unangetastet. Sie ist die Beschriftung fuer Menschen;
+// ein erkanntes Material darf nicht hineingeschrieben werden, sonst wird aus
+// "Schwarzrohr DN50" ein "stahl DN50" und die Zeile ist unauffindbar.
 function normalisierePositionen(positionen) {
   const hinweise = [];
-  const raus = (positionen || []).map((p) => {
-    const bezeichnung = String(p.bezeichnung || '');
-    const art = wissen.klasseFuer(bezeichnung);
-
-    // Material erkennen — auch in Zusammensetzungen wie "Kupferrohr".
-    // Braucht die Gebinde-Umrechnung: eine Kupferstange misst 5 m, eine
-    // Stahlstange 6 m.
-    const material = wissen.materialErkennen(bezeichnung, art);
-
-    const g = wissen.gebinde(p.menge, p.einheit, art, material);
-    if (g.umgerechnet) hinweise.push(`${bezeichnung}: ${g.hinweis}`);
-
-    return {
-      ...p,
-      menge: g.menge != null ? g.menge : p.menge,
-      einheit: g.einheit || p.einheit,
-      _art: art,
-      _material: material
-    };
-  });
-  return { positionen: raus, hinweise };
+  for (const p of positionen || []) {
+    if (p.umgerechnet_aus) hinweise.push(`${p.bezeichnung}: ${p.umgerechnet_aus} = ${p.menge} ${p.einheit}`);
+  }
+  return { positionen: positionen || [], hinweise };
 }
 
 // ───────────────────────────────────────────────────────────── Ausführung
@@ -149,7 +139,7 @@ module.exports = {
       pflicht: true, typ: 'liste', min: 1, label: 'Positionen',
       felder: {
         menge: 'zahl', einheit: 'text', bezeichnung: 'text',
-        zustand: 'text?', kategorie: 'text?'
+        zustand: 'text?', kategorie: 'text?', umgerechnet_aus: 'text?'
       },
       beschreibung: 'eine Zeile je Artikel',
       frage: 'Welches Material und wie viel? (z. B. „5 Stahlbögen DN50")'
@@ -172,7 +162,11 @@ module.exports = {
     '  Die Maßeinheit gehört in die bezeichnung, sonst findet findePosition die Zeile nicht.\n' +
     '- zustand ist eines von "neu", "gebraucht", "verschmutzt". Ohne Angabe: "neu".\n' +
     '- kategorie aus dieser festen Liste wählen, sonst "Sonstiges":\n    ' + KATEGORIEN.join(', ') + '\n' +
-    '- Diktier- und OCR-Fehler still korrigieren.\n\n' + wissen.promptKontext(),
+    '- Diktier- und OCR-Fehler still korrigieren.\n' +
+    '- Gebinde selbst umrechnen ("1 Stange" -> 6 m), dabei die Basiseinheit als einheit\n' +
+    '  setzen UND die Originalangabe in das Feld umgerechnet_aus schreiben ("1 Stange").\n' +
+    '  Nur so sieht der Nutzer in der Bestätigung, ob die Umrechnung stimmt.\n' +
+    '  Steht die Gebindegröße nicht im Fachwissen: nicht raten, sondern nachfragen.',
 
   commands: [
     {

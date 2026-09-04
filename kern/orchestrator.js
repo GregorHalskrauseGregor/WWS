@@ -20,6 +20,8 @@ const ratelimit = require('../ratelimit');
 const experten = require('../experten');
 
 const router = require('./router');
+const wissensbasis = require('../lib/wissen');
+
 const vorgangSpeicher = require('./vorgang');
 const vorgangsmotor = require('./vorgangsmotor');
 const werkzeuge = require('./werkzeuge');
@@ -138,29 +140,39 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
 
   if (experte) dienste.protokoll?.('Experte', `Aktiv: ${experte.id} (${chatId}/${thema.id})`);
 
-  // 6) Ausführen — je nach Bauart des Experten
+  // 6) Wissen bereitstellen. Normalfall: die Karten, die der Router gewaehlt hat.
+  // Nach /addAllK einmalig alles — und das Flag ist danach verbraucht.
+  const alleGefordert = wissensbasis.brauchtAlles(chatId);
+  const wissensText = alleGefordert ? wissensbasis.alles() : wissensbasis.text(routing.wissen);
+  if (wissensText) {
+    dienste.protokoll?.('Wissen', alleGefordert
+      ? `komplette Wissensbasis (${wissensText.length} Zeichen, /addAllK)`
+      : `Karten: ${routing.wissen.join(', ')} (${wissensText.length} Zeichen)`);
+  }
+
+  // 7) Ausführen — je nach Bauart des Experten
   const bauart = experten.art(experte);
   let ergebnis;
 
   if (bauart === 'Vorgang') {
     // Deklarativer Experte: der Motor sammelt, fragt nach und führt aus.
     ergebnis = await vorgangsmotor.verarbeite(
-      { experte, chatId, themaId: thema.id, text, dokInhalt }, dienste);
+      { experte, chatId, themaId: thema.id, text, dokInhalt, wissensText }, dienste);
   } else if (bauart === 'frei') {
     // Experte mit eigener Logik.
     try {
       ergebnis = await experte.verarbeite(
-        { chatId, themaId: thema.id, text, dokInhalt, thema }, dienste);
+        { chatId, themaId: thema.id, text, dokInhalt, thema, wissensText }, dienste);
     } catch (err) {
       dienste.protokoll?.('Fehler', `Experte ${experte.id} abgestürzt: ${err.message}`);
       ergebnis = { text: `Fehler im Modul ${experte.name}: ${err.message}` };
     }
   } else {
     // Prompt-Experte oder normaler Chat: Standard-Flow mit Tool-Loop.
-    ergebnis = await standardAntwort({ chatId, thema, text, dokInhalt, experte }, dienste);
+    ergebnis = await standardAntwort({ chatId, thema, text, dokInhalt, experte, wissensText }, dienste);
   }
 
-  // 7) Nachbereitung: Gedächtnis, Filter, Persistenz
+  // 8) Nachbereitung: Gedächtnis, Filter, Persistenz
   const { sichtbar, fakt } = trenneMerkeHooks(ergebnis.text || '');
   let hinweis = '';
   if (fakt && gedaechtnis.fuegeHinzu(chatId, fakt)) hinweis = `\n\n_gemerkt: ${fakt}_`;
@@ -186,10 +198,12 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
 }
 
 // Standard-Chat mit Kontext und Tool-Loop.
-async function standardAntwort({ chatId, thema, text, dokInhalt, experte }, dienste) {
+async function standardAntwort({ chatId, thema, text, dokInhalt, experte, wissensText }, dienste) {
+  const zusatz = [experte ? experte.systemPromptAdd : null, wissensText]
+    .filter(Boolean).join('\n\n');
   const systemPrompt = kontext.baueHauptSystemPrompt(
     gedaechtnis.ladeGedaechtnis(chatId),
-    experte ? experte.systemPromptAdd : null
+    zusatz || null
   );
   const messages = kontext.baueHauptMessages(thema, text, dokInhalt);
   const wz = werkzeuge.fuerExperte(experte, dienste.provider, { chatId, themaId: thema.id });

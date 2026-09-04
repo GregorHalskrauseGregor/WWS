@@ -20,6 +20,7 @@ const ANTEIL_VORLAGE = 0.10;
 const { SCHWELLEN } = require('../config');
 const { extrahiere } = require('./json');
 const experten = require('../experten');
+const wissensbasis = require('../lib/wissen');
 const themen = require('../themen');
 const vorgang = require('./vorgang');
 
@@ -57,13 +58,15 @@ function juengstesThemaId(chatId) {
   return index.length ? index[0].id : null;
 }
 
-function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confidence }) {
+function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confidence, wissen }) {
   return {
     thema: themaId
       ? { id: themaId, name: null, neu: false }
       : { id: null, name: themaName || 'Neues Thema', neu: true },
     aktion: aktion || 'konversation',
     experte: experte || null,
+    // Welche Wissenskarten mit in den Experten-Prompt sollen. Leer = keine.
+    wissen: Array.isArray(wissen) ? wissen : [],
     dok_typ: dokTyp || null,
     hinweis: hinweis || null,
     confidence: typeof confidence === 'number' ? confidence : 0
@@ -72,7 +75,7 @@ function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confid
 
 // ─────────────────────────────────────────────────────────────────── Prompts
 
-function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock, hatDatei }) {
+function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock, hatDatei, wissensBlock }) {
   // Ohne angehaengte Datei duerfen die Datei-Aktionen gar nicht erst zur Wahl
   // stehen. Sonst antwortet der Bot auf eine reine Sprachnachricht mit
   // "Schick mir die Datei dazu" — und der gesprochene Inhalt ist verloren.
@@ -96,6 +99,9 @@ ${themenBlock}
 
 EXPERTEN (jede:r ist ein klar abgegrenzter Verantwortungsbereich, lies die Beschreibung):
 ${expertenBlock}
+
+WISSENSKARTEN (Fachwissen, das du dem Experten mitgeben kannst — waehle nur, was fuer DIESE Nachricht gebraucht wird):
+${wissensBlock}
 ${verlaufBlock}
 AKTIONEN:
 ${aktionen}
@@ -114,13 +120,20 @@ ENTSCHEIDUNGSREGELN:
 - "konversation" nur fuer Smalltalk und Rueckmeldungen, die mit keinem Sachbereich zu tun haben.
 ${dateiRegeln}
 
-(3) Robuster Umgang mit kaputten Eingaben:
+(3) Wissenskarten:
+- Waehle die Karten, deren "Laden wenn" auf diese Nachricht passt — als Liste von IDs im Feld "wissen".
+- Sparsam sein: jede Karte kostet Tokens. Zwei bis drei sind normal, alle sechs fast nie noetig.
+- Bei "konversation" und "nachfragen" in aller Regel eine leere Liste.
+- Im Zweifel lieber eine Karte zu viel als eine zu wenig — eine fehlende Karte laesst den
+  Experten raten, und geratenes Fachwissen landet in der Lagerdatei.
+
+(4) Robuster Umgang mit kaputten Eingaben:
 - Auch unvollstaendige Saetze ("DN20", "1m", "gebraucht"), einzelne Worte ("passt") oder offensichtlich verlegte Worte ("3 Pressfittings Edelstahl 28mm neu" als dritte Zeile nach Einlager-Anweisungen) gehoeren in den richtigen Faden — lies den Verlauf, nicht die Heuristik.
 - Eine bewusste Aenderung des Themas ("ganz anderes Thema", "nebenbei", "zurueck zum Aufmass") startet ein neues Thema. Sonst nicht.
 - Du darfst auch bei subjektiv "schwierigen" Eingaben mutig entscheiden — der Nutzer kann jederzeit korrigieren. Lieber eine Entscheidung treffen und Hinweise geben als gar nichts entscheiden.
 
 FORMAT (genau so, eine Zeile):
-{"thema":"<themaId oder neu>","themaName":"<nur bei neu, 2-5 Wörter>","aktion":"<aktion>","experte":"<id oder null>","dok_typ":null,"hinweis":null,"confidence":0.0}`;
+{"thema":"<themaId oder neu>","themaName":"<nur bei neu, 2-5 Wörter>","aktion":"<aktion>","experte":"<id oder null>","wissen":["<kartenId>"],"dok_typ":null,"hinweis":null,"confidence":0.0}`;
 }
 
 // Zweiter Versuch, falls die erste Antwort leer blieb: minimal, damit auch ein
@@ -262,7 +275,7 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
   let parsed = null;
   try {
     parsed = extrahiere(await chat(
-      baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock: baueVerlaufBlock(chatId), hatDatei }), eingabe));
+      baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock: baueVerlaufBlock(chatId), hatDatei, wissensBlock: wissensbasis.katalog() }), eingabe));
     if (!parsed) {
       melde('Erste Antwort ohne JSON — zweiter Versuch mit Kurz-Prompt.');
       parsed = extrahiere(await chat(baueKurzPrompt({ themenBlock, expertenBlock: liste.map((e) => e.id).join(', ') }), eingabe));
@@ -288,6 +301,16 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
 
   const erlaubt = ['verarbeiten', 'konversation', 'nachfragen',
     'vorlage_speichern', 'style_speichern', 'dokument_speichern'];
+
+  // Kartenwahl saeubern. Ein Modell darf sich hier irren, ohne dass es weh tut:
+  // erfundene IDs fliegen raus, und mehr als vier Karten sind nie noetig — das
+  // waere fast die ganze Wissensbasis und damit genau der Tokenverbrauch, den
+  // die Auswahl vermeiden soll.
+  const bekannteKarten = wissensbasis.karten().map((k) => k.id);
+  const gewaehlteKarten = (Array.isArray(parsed.wissen) ? parsed.wissen : [])
+    .map((w) => String(w || '').trim().toLowerCase())
+    .filter((w) => bekannteKarten.includes(w))
+    .slice(0, 4);
 
   // Nachsicht bei einem haeufigen Formfehler: Modelle schreiben die Experten-ID
   // gern direkt ins Feld aktion, statt aktion=verarbeiten zu setzen und die ID
@@ -319,7 +342,7 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
     return ergebnis({
       themaId, themaName: parsed.themaName || leiteThemaNamenAb(text),
       aktion: 'vorlage_speichern', dokTyp: 'vorlage',
-      hinweis: parsed.hinweis, confidence: Math.max(confidence, 0.9)
+      hinweis: parsed.hinweis, confidence: Math.max(confidence, 0.9), wissen: []
     });
   }
 
@@ -357,7 +380,8 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
     experte,
     dokTyp: parsed.dok_typ,
     hinweis: parsed.hinweis,
-    confidence
+    confidence,
+    wissen: gewaehlteKarten
   });
 }
 

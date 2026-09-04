@@ -254,7 +254,7 @@ Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, kein Markdown, kein Kommentar:
 
 // ─────────────────────────────────────────────────────────── Extraktions-Call
 
-function baueExtraktionsPrompt(experte, daten) {
+function baueExtraktionsPrompt(experte, daten, wissensText) {
   const schema = experte.schema;
   const standJetzt = Object.keys(daten || {}).length
     ? JSON.stringify(daten, null, 2)
@@ -292,6 +292,7 @@ WICHTIG zu index: der Nutzer zählt ab 1, genau wie im angezeigten Stand. "Posit
 - Enthält die Nachricht gar keine Daten (Smalltalk, Rückfrage): leeres ops-Array.
 - Offensichtliche Diktier- und OCR-Fehler still korrigieren.
 ${experte.extraktionsHinweise ? '\n════════ FACHLICHE HINWEISE ════════\n' + experte.extraktionsHinweise : ''}
+${wissensText ? '\n════════ ' + wissensText : ''}
 
 ════════ ANTWORTFORMAT ════════
 AUSSCHLIESSLICH ein JSON-Objekt, kein Markdown, kein Kommentar:
@@ -349,7 +350,7 @@ async function extrahiereAusDokument(experte, dokInhalt, dienste) {
 // dienste = { chat(systemPrompt, userText), protokoll(typ, text) }
 // Rückgabe ist transport-neutral: { text, dateien, knoepfe, vorgangEnde }
 
-async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste) {
+async function verarbeite({ experte, chatId, themaId, text, dokInhalt, wissensText }, dienste) {
   const schema = experte.schema;
   const dok = String(dokInhalt || '').trim();
   // Kurze Anhaenge wandern in die normale Extraktion, lange werden separat und
@@ -374,7 +375,7 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt }, dienste
   let vorschlag = {};
   if (eingabe) {
     try {
-      vorschlag = extrahiere(await dienste.chat(baueExtraktionsPrompt(experte, vorgang.daten), eingabe)) || {};
+      vorschlag = extrahiere(await dienste.chat(baueExtraktionsPrompt(experte, vorgang.daten, wissensText), eingabe)) || {};
     } catch (err) {
       dienste.protokoll?.('Fehler', `Extraktion ${experte.id} (${chatId}/${themaId}): ${err.message}`);
       return { text: 'Ich konnte deine Angaben gerade nicht auswerten. Schick sie mir bitte nochmal.' };

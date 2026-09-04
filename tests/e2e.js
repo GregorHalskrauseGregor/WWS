@@ -20,6 +20,7 @@ const pruefe = (name, fn) => {
 };
 
 // ── Fake-Modell: der Router antwortet nach Stichwort, der Extraktor liefert Ops
+const protokollZeilen = [];
 let routerAntwort = null;
 let extraktionAntwort = null;
 
@@ -29,7 +30,7 @@ const dienste = {
   antwortChat: async () => 'Standardantwort.',
   lightChat: async () => 'Zusammenfassung.',
   provider: { name: 'anthropic', supportsTools: true, chat: async () => ({ content: 'Standardantwort.', toolCalls: null }) },
-  protokoll: () => {},
+  protokoll: (typ, txt) => protokollZeilen.push(`${typ}: ${txt}`),
   melde: () => {},
   frageBestaetigung: async () => ({ erlaubt: false, grund: 'Test' })
 };
@@ -159,6 +160,44 @@ async function schicke(text, routing, ops) {
     assert(index.length >= 3, `nur ${index.length} Themen`);
     const t1 = themen.ladeThema(CHAT, thema1);
     assert(t1.messages.length >= 2, 'Verlauf leer');
+  });
+
+  console.log('\n── Der Router wählt die Wissenskarten ──');
+
+  protokollZeilen.length = 0;
+  await schicke(
+    'trag 5 Stangen Schwarzrohr DN50 ein',
+    { thema: 'neu', themaName: 'Einlagerung', aktion: 'verarbeiten', experte: 'lager',
+      wissen: ['sprache', 'einheiten'], confidence: 0.9 },
+    { ops: [] });
+  pruefe('gewählte Karten landen im Protokoll', () => {
+    const zeile = protokollZeilen.find((z) => z.startsWith('Wissen:'));
+    assert(zeile, 'kein Wissens-Protokolleintrag');
+    assert(/sprache/.test(zeile), 'Karte sprache fehlt');
+    assert(/einheiten/.test(zeile), 'Karte einheiten fehlt');
+  });
+
+  protokollZeilen.length = 0;
+  await schicke(
+    'trag 5 Stangen Schwarzrohr DN50 ein',
+    { thema: 'neu', themaName: 'Einlagerung 2', aktion: 'verarbeiten', experte: 'lager',
+      wissen: ['sprache', 'gibtesnicht', 'auch_nicht'], confidence: 0.9 },
+    { ops: [] });
+  pruefe('erfundene Karten-IDs fliegen raus, die echte bleibt', () => {
+    const zeile = protokollZeilen.find((z) => z.startsWith('Wissen:'));
+    assert(zeile, 'kein Wissens-Protokolleintrag');
+    assert(/sprache/.test(zeile), 'echte Karte ging verloren');
+    assert(!/gibtesnicht/.test(zeile), 'erfundene Karte wurde geladen');
+  });
+
+  protokollZeilen.length = 0;
+  await schicke(
+    'alles klar, danke',
+    { thema: 'neu', themaName: 'Smalltalk', aktion: 'konversation', experte: null,
+      wissen: [], confidence: 0.9 });
+  pruefe('Smalltalk lädt kein Wissen', () => {
+    assert(!protokollZeilen.some((z) => z.startsWith('Wissen:')),
+      'Smalltalk hat Wissenskarten geladen');
   });
 
   console.log(`\n${'─'.repeat(46)}\nE2E: ${ok} bestanden, ${fehler} fehlgeschlagen`);
