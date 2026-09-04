@@ -139,7 +139,7 @@ const LAGERIST = 900002;
 
   await pruefe('Teilmengen und Nullmengen werden festgehalten', () => {
     reservierungen.setzeBestaetigung(vorgang.id, 0, 4);
-    reservierungen.setzeBestaetigung(vorgang.id, 1, 5);
+    reservierungen.setzeBestaetigung(vorgang.id, 1, 5, true);
     const r = reservierungen.lade(vorgang.id);
     assert.equal(r.positionen[0].bestaetigt, 4);
     assert.equal(r.positionen[1].bestaetigt, 5);
@@ -154,9 +154,30 @@ const LAGERIST = 900002;
   });
 
   await pruefe('negative Mengen sind nicht möglich', () => {
-    reservierungen.setzeBestaetigung(vorgang.id, 1, -3);
+    reservierungen.setzeBestaetigung(vorgang.id, 1, -3, true);
     assert.equal(reservierungen.lade(vorgang.id).positionen[1].bestaetigt, 0);
-    reservierungen.setzeBestaetigung(vorgang.id, 1, 5);
+    reservierungen.setzeBestaetigung(vorgang.id, 1, 5, true);
+  });
+
+  await pruefe('OHNE bestätigten Rest bleibt der Bestand unangetastet', async () => {
+    // Der Lagerist entscheidet nicht, ob dem Monteur 5 statt 12 reichen. Legt er
+    // weniger heraus, ohne zu bestätigen, dass mehr nicht da war, darf die
+    // Lagerdatei nicht angefasst werden.
+    const v = reservierungen.anlegen({
+      monteurChatId: MONTEUR,
+      positionen: [{ bezeichnung: 'Kugelhahn DN25 Trinkwasser', menge: 6, einheit: 'Stk.' }]
+    });
+    reservierungen.setzeBestaetigung(v.id, 0, 2, false); // keine Bestätigung
+    const vorher = material.gesamtbestand(
+      material.findePosition(await material.leseAlle(PFADE.MATERIAL_XLSX), 'Kugelhahn DN25 Trinkwasser'));
+
+    const e = await reservierungen.abschliessen(v.id,
+      { zurechtgelegt: false, material, pfad: PFADE.MATERIAL_XLSX });
+    assert.equal(e.korrekturen.length, 0, 'der Bestand wurde ohne Bestätigung korrigiert');
+
+    const nachher = material.gesamtbestand(
+      material.findePosition(await material.leseAlle(PFADE.MATERIAL_XLSX), 'Kugelhahn DN25 Trinkwasser'));
+    assert.equal(nachher, vorher, 'der Bestand hat sich verändert');
   });
 
   console.log('\n── Zurechtgelegt: abschliessen() macht beides in der richtigen Reihenfolge ──');
@@ -193,6 +214,7 @@ const LAGERIST = 900002;
   console.log('\n── Nicht zurechtgelegt: was fehlt, wird freigegeben ──');
 
   await pruefe('nur der Fehlbetrag wird freigegeben, der Rest bleibt vorgemerkt', async () => {
+    // Hier MIT bestätigtem Rest: mehr war nicht da.
     await material.addierePositionen(
       [{ bezeichnung: 'Rohrschelle M8 DN50', menge: 20, einheit: 'Stk.', kategorie: 'Befestigung, Montage & Elektro' }],
       PFADE.MATERIAL_XLSX);
@@ -203,7 +225,7 @@ const LAGERIST = 900002;
       monteurChatId: MONTEUR,
       positionen: [{ bezeichnung: 'Rohrschelle M8 DN50', menge: 10, einheit: 'Stk.' }]
     });
-    reservierungen.setzeBestaetigung(v.id, 0, 6);
+    reservierungen.setzeBestaetigung(v.id, 0, 6, true);
 
     const e = await reservierungen.abschliessen(v.id,
       { zurechtgelegt: false, material, pfad: PFADE.MATERIAL_XLSX });
@@ -226,7 +248,7 @@ const LAGERIST = 900002;
       monteurChatId: MONTEUR,
       positionen: [{ bezeichnung: 'T-Stück DN50', menge: 4, einheit: 'Stk.' }]
     });
-    reservierungen.setzeBestaetigung(v.id, 0, 0);
+    reservierungen.setzeBestaetigung(v.id, 0, 0, true);
     const e = await reservierungen.abschliessen(v.id,
       { zurechtgelegt: false, material, pfad: PFADE.MATERIAL_XLSX });
     assert.equal(e.reservierung.status, 'abgelehnt');
@@ -279,6 +301,95 @@ const LAGERIST = 900002;
     const t = nachricht.monteurBescheid(r, reservierungen.bilanz(r));
     assert.match(t, /best(ä|ae)tigt/i);
     assert.match(t, /bleibt für dich reserviert/i);
+  });
+
+  console.log('\n── Zurückziehen durch den Monteur ──');
+
+  await pruefe('offen -> lässt sich zurückziehen, Material wird frei', async () => {
+    await material.addierePositionen(
+      [{ bezeichnung: 'Muffe DN20', menge: 30, einheit: 'Stk.', kategorie: 'Fittinge & Verbindungstechnik' }],
+      PFADE.MATERIAL_XLSX);
+    await material.reservierePositionen([{ bezeichnung: 'Muffe DN20', menge: 8 }],
+      PFADE.MATERIAL_XLSX, MONTEUR);
+    const v = reservierungen.anlegen({
+      monteurChatId: MONTEUR,
+      positionen: [{ bezeichnung: 'Muffe DN20', menge: 8, einheit: 'Stk.' }]
+    });
+
+    const e = await reservierungen.storniere(v.id, { chatId: MONTEUR, material, pfad: PFADE.MATERIAL_XLSX });
+    assert.equal(e.erfolg, true, e.grund);
+    assert.equal(e.reservierung.status, 'storniert');
+
+    const p = material.findePosition(await material.leseAlle(PFADE.MATERIAL_XLSX), 'Muffe DN20');
+    assert.equal(material.reserviertVon(p, MONTEUR), 0, 'die Vormerkung besteht weiter');
+    assert.equal(material.gesamtbestand(p), 30, 'der Bestand wurde angefasst');
+  });
+
+  await pruefe('in Arbeit -> geht noch, und der Lagerist wird unterbrochen', async () => {
+    const v = reservierungen.anlegen({
+      monteurChatId: MONTEUR,
+      positionen: [{ bezeichnung: 'Muffe DN20', menge: 2, einheit: 'Stk.' }]
+    });
+    reservierungen.setzeStatus(v.id, reservierungen.STATUS.in_arbeit, { bearbeitetVon: String(LAGERIST) });
+    const e = await reservierungen.storniere(v.id, { chatId: MONTEUR, material, pfad: PFADE.MATERIAL_XLSX });
+    assert.equal(e.erfolg, true);
+    assert.equal(String(e.unterbrichtLageristen), String(LAGERIST),
+      'der Lagerist erfährt nicht, dass er umsonst zusammenstellt');
+  });
+
+  await pruefe('bearbeitet -> zu spät, mit klarer Ansage', async () => {
+    const v = reservierungen.anlegen({
+      monteurChatId: MONTEUR,
+      positionen: [{ bezeichnung: 'Muffe DN20', menge: 2, einheit: 'Stk.' }]
+    });
+    reservierungen.setzeStatus(v.id, reservierungen.STATUS.bereitgestellt);
+    const e = await reservierungen.storniere(v.id, { chatId: MONTEUR, material, pfad: PFADE.MATERIAL_XLSX });
+    assert.equal(e.erfolg, false);
+    assert.equal(e.grund, 'zu_spaet');
+    const t = nachricht.stornoBescheid(e.reservierung, false, 'zu_spaet');
+    assert.match(t, /nicht mehr zur(ü|ue)ckziehen/i);
+    assert.match(t, /selbst zur(ü|ue)ck/i, 'es steht nicht da, dass er es selbst zurückräumen muss');
+  });
+
+  await pruefe('fremde Reservierungen kann niemand zurückziehen', async () => {
+    const v = reservierungen.anlegen({
+      monteurChatId: MONTEUR,
+      positionen: [{ bezeichnung: 'Muffe DN20', menge: 1, einheit: 'Stk.' }]
+    });
+    const e = await reservierungen.storniere(v.id, { chatId: 999999, material, pfad: PFADE.MATERIAL_XLSX });
+    assert.equal(e.erfolg, false);
+    assert.equal(e.grund, 'fremd');
+  });
+
+  await pruefe('eine stornierte steht nicht mehr beim Lageristen', () => {
+    const storniert = reservierungen.alle().filter((r) => r.status === 'storniert');
+    assertOk(storniert.length >= 2, 'keine stornierten gefunden');
+    for (const r of storniert) {
+      assertOk(!reservierungen.offene().some((o) => o.id === r.id),
+        `${r.id} steht noch in der offenen Liste`);
+    }
+  });
+
+  console.log('\n── Die Rückfrage bei einer Teilmenge ──');
+
+  await pruefe('die Frage sagt, was die Antwort bedeutet', () => {
+    const r = {
+      id: 'rtesttest', monteurName: 'Torsten', erstelltAm: new Date().toISOString(),
+      positionen: [{ bezeichnung: 'Schwarzrohr DN50', menge: 12, einheit: 'm', bestaetigt: null }]
+    };
+    const t = nachricht.restFrage(r, 0, 5);
+    assert.match(t, /Angefordert: 12/);
+    assert.match(t, /5 m/);
+    assert.match(t, /Rest/i);
+    assert.match(t, /leer/i, 'die Folge der Antwort wird nicht benannt');
+  });
+
+  await pruefe('bei null lautet die Frage anders', () => {
+    const r = {
+      id: 'rtesttest', erstelltAm: new Date().toISOString(),
+      positionen: [{ bezeichnung: 'Schwarzrohr DN50', menge: 12, einheit: 'm', bestaetigt: null }]
+    };
+    assert.match(nachricht.restFrage(r, 0, 0), /nichts (da|mehr)/i);
   });
 
   console.log('\n── Die Liste wird nur bei echter Änderung neu geschickt ──');

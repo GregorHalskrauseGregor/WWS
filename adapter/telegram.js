@@ -562,6 +562,21 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     await sendeText(chatId, text);
   });
 
+  // /storno_r7k3m9x2 — antippbar, weil Telegram keine Befehle mit Leerzeichen
+  // verlinkt. Wird auf "/storno r7k3m9x2" abgebildet, damit es nur EINEN
+  // Befehl im Experten gibt.
+  befehl(/^\/([a-z_]+)_(r[a-z0-9]{8})\b/i, async (msg, m) => {
+    const cmd = experten.alleCommands().find((c) => c.name.toLowerCase() === m[1].toLowerCase());
+    if (!cmd) return;
+    const chatId = msg.chat.id;
+    try {
+      const ergebnis = await cmd.ausfuehren({ chatId, argument: m[2], dienste: dienste(chatId) });
+      if (ergebnis && ergebnis.text) await sendeText(chatId, ergebnis.text);
+    } catch (err) {
+      await sendeText(chatId, `Fehler bei /${m[1]}: ${err.message}`);
+    }
+  });
+
   for (const cmd of experten.alleCommands()) {
     const muster = new RegExp(`^\\/${cmd.name}(?:\\s+(.+))?\\s*$`, 'i');
     befehl(muster, async (msg, m) => {

@@ -13,6 +13,8 @@ const libExcel = require('../lib/excel');
 const schreibweisen = require('../lib/schreibweisen');
 const reservierungen = require('../reservierungen');
 const lagerNachricht = require('../lib/lager_nachricht');
+const modus = require('../kern/modus');
+const benachrichtigung = require('../benachrichtigung');
 const benutzer = require('../benutzer');
 const fs = require('fs');
 const path = require('path');
@@ -244,6 +246,40 @@ module.exports = {
       }
     },
     {
+      name: 'storno',
+      beschreibung: 'Zieht eine Reservierung zurück, solange der Lagerist sie noch nicht bearbeitet hat',
+      ausfuehren: async ({ chatId, argument }) => {
+        const id = String(argument || '').trim().replace(/^\//, '').toLowerCase();
+        if (!id) {
+          const offen = reservierungen.vonMonteur(chatId)
+            .filter((r) => reservierungen.STORNIERBAR.has(r.status));
+          if (!offen.length) {
+            return { text: 'Du hast gerade keine Reservierung, die sich noch zurückziehen lässt.' };
+          }
+          return {
+            text: '↩️ *Welche soll weg?*\n\n' +
+              offen.map((r) => `/storno_${r.id} — ${r.positionen.length} Position(en), ` +
+                `${lagerNachricht.zeitpunkt(r.erstelltAm)}`).join('\n')
+          };
+        }
+
+        const e = await reservierungen.storniere(id, { chatId, material, pfad: PFADE.MATERIAL_XLSX });
+        if (!e.reservierung) return { text: `Die Reservierung ${id} gibt es nicht.` };
+
+        // Steht der Lagerist gerade davor, muss er es sofort erfahren — sonst
+        // legt er Material fuer einen Auftrag zusammen, den es nicht mehr gibt.
+        if (e.erfolg && e.unterbrichtLageristen) {
+          modus.beende(e.unterbrichtLageristen);
+          await benachrichtigung.sende('lagerbot', e.unterbrichtLageristen,
+            `↩️ *${id} wurde gerade zurückgezogen.*\n\n` +
+            `${e.reservierung.monteurName || 'Der Monteur'} braucht das Material nicht mehr. ` +
+            'Wenn du schon etwas herausgelegt hast, räum es bitte zurück.');
+        }
+
+        return { text: lagerNachricht.stornoBescheid(e.reservierung, e.erfolg, e.grund) };
+      }
+    },
+    {
       name: 'reservierungen',
       beschreibung: 'Zeigt deine Reservierungen mit Nummer, Zeitpunkt und Status',
       ausfuehren: async ({ chatId }) => {
@@ -256,6 +292,7 @@ module.exports = {
 
         const zeichen = {
           offen: '🟡 wartet auf den Lageristen',
+          storniert: '↩️ zurückgezogen',
           in_arbeit: '🔵 wird gerade geprüft',
           bereitgestellt: '📦 liegt bereit (ausgebucht)',
           reserviert: '✅ bestätigt, liegt im Regal',
@@ -276,6 +313,9 @@ module.exports = {
           }
           if (b.fehlendeListe.length && v.status !== 'offen') {
             zeilen.push(`   _${b.fehlendeListe.length} Position(en) fehlen ganz oder teilweise._`);
+          }
+          if (reservierungen.STORNIERBAR.has(v.status)) {
+            zeilen.push(`   ↩️ /storno_${v.id}`);
           }
           zeilen.push('');
         }

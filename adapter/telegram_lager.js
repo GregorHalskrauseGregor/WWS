@@ -63,6 +63,15 @@ function starte({ token }) {
     }
   });
 
+  const restKnoepfe = (r, index, menge) => ({
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '✅ Ja, das war der Rest', callback_data: `rest:${r.id}:${index}:${menge}` }],
+        [{ text: '↩️ Nein, nochmal', callback_data: `nochmal:${r.id}:${index}:0` }]
+      ]
+    }
+  });
+
   const abschlussKnoepfe = (r) => ({
     reply_markup: {
       inline_keyboard: [
@@ -124,7 +133,7 @@ function starte({ token }) {
     const r = reservierungen.lade(id);
     if (!r) { modus.beende(chatId); return; }
     if (index >= r.positionen.length) return frageAbschluss(chatId, r);
-    modus.aktualisiere(chatId, { id, index });
+    modus.aktualisiere(chatId, { id, index, rueckfrage: null });
     return sendeText(chatId, nachricht.positionsFrage(r, index), jaNein(r, index));
   }
 
@@ -136,7 +145,23 @@ function starte({ token }) {
   async function antworteAufPosition(chatId, id, index, menge) {
     const r = reservierungen.lade(id);
     if (!r || !r.positionen[index]) return;
-    reservierungen.setzeBestaetigung(id, index, menge);
+
+    // Weniger als angefordert ist keine Entscheidung des Lageristen, sondern
+    // eine Tatsache ueber das Regal. Deshalb wird sie EINZELN bestaetigt, bevor
+    // es weitergeht — und erst diese Bestaetigung erlaubt spaeter, den Bestand
+    // anzufassen. Ohne sie bleibt die Zahl in der Lagerdatei unveraendert.
+    if (menge < r.positionen[index].menge) {
+      modus.aktualisiere(chatId, { id, index, rueckfrage: menge });
+      return sendeText(chatId, nachricht.restFrage(r, index, menge), restKnoepfe(r, index, menge));
+    }
+
+    reservierungen.setzeBestaetigung(id, index, menge, false);
+    return frageNaechste(chatId, id, index + 1);
+  }
+
+  async function bestaetigeRest(chatId, id, index, menge) {
+    reservierungen.setzeBestaetigung(id, index, menge, true);
+    modus.aktualisiere(chatId, { id, index, rueckfrage: null });
     return frageNaechste(chatId, id, index + 1);
   }
 
@@ -218,6 +243,9 @@ function starte({ token }) {
     if (aktiv.daten.abschluss) {
       return sendeText(chatId, 'Nimm einen der beiden Knöpfe: zurechtgelegt oder liegt im Regal.');
     }
+    if (aktiv.daten.rueckfrage !== null && aktiv.daten.rueckfrage !== undefined) {
+      return sendeText(chatId, 'Beantworte erst die Rückfrage: War das der Rest?');
+    }
 
     const zahl = Number(text.replace(',', '.').replace(/[^\d.]/g, ''));
     if (!Number.isFinite(zahl) || zahl < 0) {
@@ -241,6 +269,21 @@ function starte({ token }) {
       return antworteAufPosition(chatId, id, index, menge);
     }
 
+    if (was === 'rest') {
+      const index = Number(wert);
+      const menge = Number(String(query.data).split(':')[3]);
+      try { await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: chatId, message_id: query.message.message_id }); } catch { /* egal */ }
+      return bestaetigeRest(chatId, id, index, menge);
+    }
+
+    if (was === 'nochmal') {
+      const index = Number(wert);
+      try { await bot.editMessageReplyMarkup({ inline_keyboard: [] },
+        { chat_id: chatId, message_id: query.message.message_id }); } catch { /* egal */ }
+      return frageNaechste(chatId, id, index);
+    }
+
     if (was === 'fertig') {
       try { await bot.editMessageReplyMarkup({ inline_keyboard: [] },
         { chat_id: chatId, message_id: query.message.message_id }); } catch { /* egal */ }
@@ -255,7 +298,12 @@ function starte({ token }) {
   }, TAKT_MS);
   if (typeof takt.unref === 'function') takt.unref();
 
-  benachrichtigung.registriere('lagerbot', (chatId, text, extra) => sendeText(chatId, text, extra));
+  benachrichtigung.registriere('lagerbot', async (chatId, text, extra) => {
+    await sendeText(chatId, text, extra);
+    // Nach einer Unterbrechung von aussen (Storno) steht der Lagerist ohne
+    // Aufgabe da — also sofort die aktuelle Liste hinterher.
+    if (!modus.aktiv(chatId)) await zeigeListe(chatId, { erzwinge: true });
+  });
 
   console.log('Lager-Bot läuft. Takt: alle 60 Sekunden.');
   return bot;

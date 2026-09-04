@@ -23,8 +23,14 @@ const STATUS = {
   in_arbeit: 'in_arbeit',         // Lagerist geht sie gerade Position fuer Position durch
   bereitgestellt: 'bereitgestellt', // zurechtgemacht, Material gilt als entnommen
   reserviert: 'reserviert',       // bestaetigt, liegt aber noch im Regal
-  abgelehnt: 'abgelehnt'          // nichts davon war da
+  abgelehnt: 'abgelehnt',         // nichts davon war da
+  storniert: 'storniert'          // vom Monteur zurueckgezogen, bevor der Lagerist fertig war
 };
+
+// Bis wohin der Monteur zurueckziehen darf. Danach hat der Lagerist das
+// Material in der Hand — ab da muss der Monteur nehmen, was herausgelegt wurde,
+// und es notfalls selbst zurueckraeumen.
+const STORNIERBAR = new Set([STATUS.offen, STATUS.in_arbeit]);
 
 // Ohne o/0 und l/1: die Nummer wird vorgelesen und abgetippt.
 const ZEICHEN = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -86,7 +92,10 @@ function anlegen({ monteurChatId, monteurName, positionen, bemerkung }) {
       bezeichnung: p.bezeichnung,
       menge: p.menge,
       einheit: p.einheit || 'Stk.',
-      bestaetigt: null
+      bestaetigt: null,
+      // Hat der Lagerist bestaetigt, dass eine kleinere Menge den Rest bedeutet?
+      // Ohne diese Bestaetigung wird der Bestand NICHT angefasst.
+      restBestaetigt: false
     })),
     bearbeitetVon: null,
     bearbeitetAm: null
@@ -102,11 +111,38 @@ function setzeStatus(id, status, zusatz = {}) {
   return schreibe(r);
 }
 
-function setzeBestaetigung(id, index, menge) {
+function setzeBestaetigung(id, index, menge, restBestaetigt = false) {
   const r = lade(id);
   if (!r || !r.positionen[index]) return null;
   r.positionen[index].bestaetigt = Math.max(0, Number(menge) || 0);
+  r.positionen[index].restBestaetigt = !!restBestaetigt;
   return schreibe(r);
+}
+
+// Zurueckziehen durch den Monteur.
+async function storniere(id, { chatId, material, pfad }) {
+  const r = lade(id);
+  if (!r) return { erfolg: false, grund: 'unbekannt' };
+  if (String(r.monteurChatId) !== String(chatId)) {
+    return { erfolg: false, grund: 'fremd', reservierung: r };
+  }
+  if (!STORNIERBAR.has(r.status)) {
+    return { erfolg: false, grund: 'zu_spaet', reservierung: r };
+  }
+
+  // Die volle urspruengliche Menge freigeben — der Lagerist hat noch nichts
+  // gebucht, also steht im Lager noch die Vormerkung von der Bestellung.
+  const freizugeben = r.positionen.map((p) => ({ bezeichnung: p.bezeichnung, menge: p.menge }));
+  if (freizugeben.length) await material.gibReservierungFrei(freizugeben, pfad, r.monteurChatId);
+
+  setzeStatus(id, STATUS.storniert, { storniertAm: new Date().toISOString() });
+  return {
+    erfolg: true,
+    reservierung: lade(id),
+    // Wenn der Lagerist gerade daran arbeitet, muss er es sofort erfahren —
+    // sonst legt er Material fuer einen Auftrag zusammen, den es nicht mehr gibt.
+    unterbrichtLageristen: r.status === STATUS.in_arbeit ? r.bearbeitetVon : null
+  };
 }
 
 // Wie ist die Reservierung ausgegangen? Braucht der Monteur, und die Antwort
@@ -150,12 +186,16 @@ async function abschliessen(id, { zurechtgelegt, material, pfad }) {
 
   for (const p of r.positionen) {
     if (p.bestaetigt === null || p.bestaetigt >= p.menge) continue;
+    // OHNE ausdrueckliche Bestaetigung wird kein Bestand angefasst. Der Lagerist
+    // stellt zusammen, er entscheidet nicht, ob dem Monteur 5 statt 12 reichen.
+    // Gibt er weniger mit, heisst das: mehr war nicht da — und genau das muss er
+    // im Workflow bestaetigt haben, sonst bleibt die Zahl in der Liste stehen.
+    if (!p.restBestaetigt) continue;
     const zeile = material.findePosition(bestand, p.bezeichnung);
     if (!zeile) continue;
     const gelistet = material.gesamtbestand(zeile);
-    // Nur nach unten. Dass er 5 von 12 herausgelegt hat, heisst nicht, dass nur
-    // 5 im Regal liegen — vielleicht hat er nur 5 gefunden, vielleicht nur 5
-    // gebraucht. Ein Fehlbestand wird uebernommen, ein Ueberbestand nie.
+    // Nur nach unten: ein gemeldeter Fehlbestand wird uebernommen, ein
+    // Ueberbestand nie.
     if (p.bestaetigt < gelistet) {
       korrekturen.push({
         bezeichnung: p.bezeichnung, wert: p.bestaetigt, zustand: 'neu',
@@ -197,6 +237,6 @@ async function abschliessen(id, { zurechtgelegt, material, pfad }) {
 }
 
 module.exports = {
-  STATUS, neueId, anlegen, lade, alle, offene, vonMonteur,
-  setzeStatus, setzeBestaetigung, bilanz, schreibe, abschliessen
+  STATUS, STORNIERBAR, neueId, anlegen, lade, alle, offene, vonMonteur,
+  setzeStatus, setzeBestaetigung, bilanz, schreibe, abschliessen, storniere
 };
