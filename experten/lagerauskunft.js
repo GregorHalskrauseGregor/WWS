@@ -4,6 +4,7 @@
 // gefragt ist; die Zahlen liefert ausschließlich Code über diese Werkzeuge.
 
 const material = require('../material');
+const schreibweisen = require('../lib/schreibweisen');
 const { PFADE } = require('../config');
 
 const laden = () => material.leseAlle(PFADE.MATERIAL_XLSX);
@@ -71,6 +72,39 @@ Regeln:
   nurEigeneTools: true,
 
   tools: [
+    {
+      name: 'schreibweise_pruefen',
+      beschreibung:
+        'Vergleicht eine gewünschte Materialbezeichnung mit den Schreibweisen, die im Lager ' +
+        'schon verwendet werden. Sagt, ob es dieselbe Position ist, eine neue, oder ob ' +
+        'nachgefragt werden muss. Übergib in "alternativen" gleichbedeutende Schreibweisen, ' +
+        'die du aus deinem Fachwissen kennst (z. B. "Rotguss" zu "Messing"). Nutze das, BEVOR ' +
+        'du eine Bezeichnung vorschlägst.',
+      parameter: {
+        type: 'object',
+        properties: {
+          bezeichnung: { type: 'string', description: 'Die gewünschte Bezeichnung' },
+          alternativen: {
+            type: 'array', items: { type: 'string' },
+            description: 'Gleichbedeutende Schreibweisen aus deinem Fachwissen'
+          }
+        },
+        required: ['bezeichnung']
+      },
+      ausfuehren: async ({ bezeichnung, alternativen }) => {
+        const bestand = await laden();
+        const r = schreibweisen.pruefe(bestand, bezeichnung, alternativen || []);
+        const zeilen = [`Urteil: ${r.urteil}`, r.begruendung];
+        if (r.empfehlung) zeilen.push(`Zu verwendende Bezeichnung: "${r.empfehlung}"`);
+        if (r.kandidaten.length) {
+          zeilen.push('Ähnliche Zeilen im Lager:');
+          for (const k of r.kandidaten) {
+            zeilen.push(`  "${k.bezeichnung}" [${k.kategorie}, Bestand ${k.bestand} ${k.einheit}]`);
+          }
+        }
+        return zeilen.join('\n');
+      }
+    },
     {
       name: 'bestand_suchen',
       beschreibung: 'Sucht Artikel im Lager (unscharf, DN-Schreibweise egal) und gibt Bestand, Zustand und Reservierungen zurück.',

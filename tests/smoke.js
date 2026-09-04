@@ -284,13 +284,14 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
   });
   pruefe('Lagerauskunft bringt eigene Werkzeuge mit', () => {
     const l = experten.findeExperteMitId('lagerauskunft');
-    assert.deepEqual(l.tools.map((t) => t.name), ['bestand_suchen', 'bedarf_pruefen', 'ganze_liste']);
+    assert.deepEqual(l.tools.map((t) => t.name),
+      ['schreibweise_pruefen', 'bestand_suchen', 'bedarf_pruefen', 'ganze_liste']);
   });
   pruefe('nurEigeneTools blendet die Web-Tools aus', () => {
     const l = experten.findeExperteMitId('lagerauskunft');
     const w = werkzeuge.fuerExperte(l, { supportsTools: true });
     assert(!w.definitionen.some((d) => d.name === 'web_search'), 'Web-Suche wurde trotzdem angeboten');
-    assert.equal(w.definitionen.length, 3);
+    assert.equal(w.definitionen.length, 4);
   });
 
   console.log('\n── Kern kennt keinen Experten namentlich ──');

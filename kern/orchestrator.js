@@ -22,6 +22,11 @@ const experten = require('../experten');
 const router = require('./router');
 const wissensbasis = require('../lib/wissen');
 
+// Der Hinweis aufs Aufraeumen kommt hoechstens einmal je Chat und Laufzeit.
+// Ein Bot, der bei jeder Buchung ans Aufraeumen erinnert, wird ignoriert — und
+// dann auch der Hinweis, der wirklich wichtig ist.
+const _korbHinweisGegeben = new Set();
+
 const vorgangSpeicher = require('./vorgang');
 const vorgangsmotor = require('./vorgangsmotor');
 const werkzeuge = require('./werkzeuge');
@@ -182,8 +187,22 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
     dienste.protokoll?.('Sicherheit',
       `Output-Filter entfernte ${gefiltert.gefiltert.length} Stelle(n) (${chatId}): ${gefiltert.gefiltert.join(', ')}`);
   }
+  // Der Eingangskorb faehrt bei jeder fachlichen Nachricht komplett mit. Solange
+  // er klein ist, kostet das kaum etwas — ab einer gewissen Groesse lohnt sich
+  // das Einordnen, weil aufgeraeumtes Wissen nur noch dann geladen wird, wenn
+  // der Router es braucht.
+  let korbHinweis = '';
+  if (wissensText && !_korbHinweisGegeben.has(String(chatId))) {
+    const korb = wissensbasis.korbVoll();
+    if (korb.zuVoll) {
+      _korbHinweisGegeben.add(String(chatId));
+      korbHinweis = `\n\n_In der Wissensbank warten ${korb.anzahl} Notizen aufs Einordnen. ` +
+        'Sie fahren derzeit bei jeder Materialnachricht ungefiltert mit — /addKnowledge räumt auf._';
+    }
+  }
+
   const endText = (gefiltert.hinweis ? gefiltert.hinweis + '\n\n' : '') +
-    (gefiltert.text || '(keine Antwort)') + hinweis;
+    (gefiltert.text || '(keine Antwort)') + hinweis + korbHinweis;
 
   themen.haengeNachrichtAn(chatId, thema.id, 'user', text || '(Datei)');
   themen.haengeNachrichtAn(chatId, thema.id, 'assistant', gefiltert.text || '');

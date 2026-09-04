@@ -324,6 +324,78 @@ const bestandVon = async (bez) => {
     assert((await kopf(mit)).includes('reserviert'), 'Spalte fehlt trotz Wunsch');
   });
 
+console.log('\n── Schreibweisen-Abgleich: dieselbe Zeile oder eine neue? ──');
+
+{
+  const schreibweisen = require('../lib/schreibweisen');
+  const bestand = [
+    { bezeichnung: 'Kugelhahn DN25 Trinkwasser', kategorie: 'Armaturen & Ventile', einheit: 'Stk.', neu: 5, gebraucht: 0, verschmutzt: 0 },
+    { bezeichnung: 'Kugelhahn DN40', kategorie: 'Armaturen & Ventile', einheit: 'Stk.', neu: 2, gebraucht: 0, verschmutzt: 0 },
+    { bezeichnung: 'Schwarzrohr DN50', kategorie: 'Rohre & Leitungen', einheit: 'm', neu: 60, gebraucht: 0, verschmutzt: 0 }
+  ];
+
+  await pruefe('gleicher Informationsgehalt -> bestehende Schreibweise', () => {
+    const r = schreibweisen.pruefe(bestand, 'Kugelhahn DN25 Trinkwasser');
+    assert(r.urteil === 'identisch', `Urteil war ${r.urteil}`);
+    assert(r.empfehlung === 'Kugelhahn DN25 Trinkwasser', 'falsche Empfehlung');
+  });
+
+  await pruefe('Synonym von der KI -> trotzdem die bestehende Zeile', () => {
+    // Der Code kennt keine Synonyme mehr. Die KI reicht sie als Alternative
+    // durch, der Code vergleicht sie mit der Wirklichkeit.
+    const r = schreibweisen.pruefe(bestand, 'Stahlrohr DN50', ['Schwarzrohr DN50']);
+    assert(r.urteil === 'identisch', `Urteil war ${r.urteil}`);
+    assert(r.empfehlung === 'Schwarzrohr DN50', `empfahl "${r.empfehlung}"`);
+  });
+
+  await pruefe('zusätzliche Angabe -> neue Position, alte bleibt', () => {
+    const r = schreibweisen.pruefe(bestand, 'Kugelhahn DN25 Trinkwasser verchromt');
+    assert(r.urteil === 'neu_praeziser', `Urteil war ${r.urteil}`);
+    assert(/verchromt/.test(r.begruendung), 'die neue Angabe wird nicht benannt');
+  });
+
+  await pruefe('weniger Angaben als die bestehende Zeile -> nachfragen', () => {
+    // Der gefaehrlichste Fall: "Kugelhahn DN25" auf "Kugelhahn DN25 Trinkwasser"
+    // zu buchen hiesse anzunehmen, es sei derselbe Artikel.
+    const r = schreibweisen.pruefe(bestand, 'Kugelhahn DN25');
+    assert(r.urteil === 'unklar_ungenauer', `Urteil war ${r.urteil}`);
+    assert(r.empfehlung === null, 'es wurde trotzdem eine Bezeichnung empfohlen');
+  });
+
+  await pruefe('abweichende Kennzahl ist nie dieselbe Zeile', () => {
+    const r = schreibweisen.pruefe(bestand, 'Kugelhahn DN32');
+    assert(r.urteil === 'neu', `DN32 wurde als ${r.urteil} gewertet`);
+  });
+
+  await pruefe('nichts Vergleichbares -> neue Position', () => {
+    const r = schreibweisen.pruefe(bestand, 'Pumpe Magna3 25-60');
+    assert(r.urteil === 'neu', `Urteil war ${r.urteil}`);
+  });
+
+  await pruefe('nur passende Zeilen kommen in den Prompt', () => {
+    const k = schreibweisen.kandidatenFuerText(bestand, '3 Kugelhähne DN25 einlagern');
+    assert(k.length >= 1 && k.length <= 3, `${k.length} Kandidaten`);
+    assert(!k.some((z) => z.bezeichnung.includes('Schwarzrohr')), 'unpassende Zeile mitgeschickt');
+  });
+
+  await pruefe('der Prompt-Block nennt die Entscheidungsregel', () => {
+    const b = schreibweisen.alsPromptBlock(bestand);
+    assert(/ZEICHENGENAU/.test(b), 'Regel "bestehende Schreibweise übernehmen" fehlt');
+    assert(/NEUE Position/.test(b), 'Regel "zusätzliche Angabe = neue Zeile" fehlt');
+    assert(/nachfragen/.test(b), 'Regel "im Zweifel nachfragen" fehlt');
+  });
+
+  await pruefe('leerer Bestand liefert keinen Prompt-Block', () => {
+    assert(schreibweisen.alsPromptBlock([]) === '', 'leerer Bestand erzeugt Text');
+  });
+
+  await pruefe('das erzeugte Dokument warnt vor Handänderungen', () => {
+    const md = schreibweisen.alsMarkdown(bestand);
+    assert(/erzeugt, nicht gepflegt/.test(md), 'Warnung fehlt');
+    assert(/Kugelhahn DN40/.test(md), 'Position fehlt im Dokument');
+  });
+}
+
   console.log(`\n${'─'.repeat(46)}\nLager: ${ok} bestanden, ${fehler} fehlgeschlagen`);
   console.log(`Testdaten: ${process.env.WWS_DATA}\n`);
   process.exit(fehler > 0 ? 1 : 0);

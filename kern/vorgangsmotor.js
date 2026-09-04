@@ -254,7 +254,7 @@ Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, kein Markdown, kein Kommentar:
 
 // ─────────────────────────────────────────────────────────── Extraktions-Call
 
-function baueExtraktionsPrompt(experte, daten, wissensText) {
+function baueExtraktionsPrompt(experte, daten, wissensText, expertenKontext) {
   const schema = experte.schema;
   const standJetzt = Object.keys(daten || {}).length
     ? JSON.stringify(daten, null, 2)
@@ -293,6 +293,7 @@ WICHTIG zu index: der Nutzer zählt ab 1, genau wie im angezeigten Stand. "Posit
 - Offensichtliche Diktier- und OCR-Fehler still korrigieren.
 ${experte.extraktionsHinweise ? '\n════════ FACHLICHE HINWEISE ════════\n' + experte.extraktionsHinweise : ''}
 ${wissensText ? '\n════════ ' + wissensText : ''}
+${expertenKontext ? '\n════════ LAGE VOR ORT ════════\n' + expertenKontext : ''}
 
 ════════ ANTWORTFORMAT ════════
 AUSSCHLIESSLICH ein JSON-Objekt, kein Markdown, kein Kommentar:
@@ -375,7 +376,20 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt, wissensTe
   let vorschlag = {};
   if (eingabe) {
     try {
-      vorschlag = extrahiere(await dienste.chat(baueExtraktionsPrompt(experte, vorgang.daten, wissensText), eingabe)) || {};
+      // Ein Experte darf vor der Extraktion Kontext beisteuern, den nur er kennt.
+      // Beim Lager sind das die Schreibweisen, die zu dieser Nachricht passen —
+      // damit die KI die Position gleich richtig benennt, statt eine zweite
+      // Zeile fuer denselben Artikel anzulegen und sie hinterher zu mergen.
+      let expertenKontext = '';
+      if (typeof experte.kontextFuer === 'function') {
+        try {
+          expertenKontext = (await experte.kontextFuer({ text, chatId, themaId, daten: vorgang.daten })) || '';
+        } catch (err) {
+          dienste.protokoll?.('Fehler', `kontextFuer(${experte.id}): ${err.message}`);
+        }
+      }
+      vorschlag = extrahiere(await dienste.chat(
+        baueExtraktionsPrompt(experte, vorgang.daten, wissensText, expertenKontext), eingabe)) || {};
     } catch (err) {
       dienste.protokoll?.('Fehler', `Extraktion ${experte.id} (${chatId}/${themaId}): ${err.message}`);
       return { text: 'Ich konnte deine Angaben gerade nicht auswerten. Schick sie mir bitte nochmal.' };

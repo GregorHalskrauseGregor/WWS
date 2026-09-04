@@ -10,6 +10,9 @@
 
 const material = require('../material');
 const libExcel = require('../lib/excel');
+const schreibweisen = require('../lib/schreibweisen');
+const fs = require('fs');
+const path = require('path');
 const { PFADE } = require('../config');
 const { KATEGORIEN } = require('../kategorien');
 
@@ -43,6 +46,32 @@ function normalisierePositionen(positionen) {
     if (p.umgerechnet_aus) hinweise.push(`${p.bezeichnung}: ${p.umgerechnet_aus} = ${p.menge} ${p.einheit}`);
   }
   return { positionen: positionen || [], hinweise };
+}
+
+// Vor der Extraktion: die Zeilen aus dem echten Bestand vorlegen, die zu dieser
+// Nachricht passen koennten. Damit entscheidet die KI die Schreibweise, WAEHREND
+// sie die Position baut — und nicht der Code hinterher per Stringvergleich.
+//
+// Nur die passenden Zeilen, nie der ganze Bestand: bei tausend Positionen waere
+// das der teuerste Prompt des Programms.
+async function schreibweisenKontext(text) {
+  try {
+    const bestand = await material.leseAlle(PFADE.MATERIAL_XLSX);
+    return schreibweisen.alsPromptBlock(schreibweisen.kandidatenFuerText(bestand, text));
+  } catch {
+    return ''; // noch keine Lagerdatei — dann gibt es auch nichts abzugleichen
+  }
+}
+
+// Nach jeder Buchung die lesbare Schreibweisen-Liste erneuern. Sie ist ein
+// Abbild der Excel, kein zweiter Datenbestand — deshalb wird sie erzeugt und
+// nicht gepflegt.
+async function erneuereSchreibweisenDoku() {
+  try {
+    const bestand = await material.leseAlle(PFADE.MATERIAL_XLSX);
+    const ziel = path.join(__dirname, '..', 'wissen', 'schreibweisen.md');
+    fs.writeFileSync(ziel, schreibweisen.alsMarkdown(bestand), 'utf-8');
+  } catch { /* nicht kritisch: die Buchung selbst ist schon durch */ }
 }
 
 // ───────────────────────────────────────────────────────────── Ausführung
@@ -129,6 +158,9 @@ module.exports = {
 
   implementiert: true,
 
+  // Wird vom Vorgangs-Motor vor jeder Extraktion gerufen.
+  kontextFuer: ({ text }) => schreibweisenKontext(text),
+
   schema: {
     richtung: {
       pflicht: true, typ: 'text', label: 'Vorgang',
@@ -166,7 +198,10 @@ module.exports = {
     '- Gebinde selbst umrechnen ("1 Stange" -> 6 m), dabei die Basiseinheit als einheit\n' +
     '  setzen UND die Originalangabe in das Feld umgerechnet_aus schreiben ("1 Stange").\n' +
     '  Nur so sieht der Nutzer in der Bestätigung, ob die Umrechnung stimmt.\n' +
-    '  Steht die Gebindegröße nicht im Fachwissen: nicht raten, sondern nachfragen.',
+    '  Steht die Gebindegröße nicht im Fachwissen: nicht raten, sondern nachfragen.\n' +
+    '- Zur Schreibweise: sagt die Eingabe DASSELBE wie eine bereits vorhandene Zeile,\n' +
+    '  nimm deren Schreibweise zeichengenau. Nennt sie etwas ZUSÄTZLICHES, ist es eine\n' +
+    '  neue Position. Fehlt der Eingabe etwas, das die vorhandene Zeile nennt: nachfragen.',
 
   commands: [
     {
@@ -214,6 +249,8 @@ module.exports = {
       : richtung === 'entnehmen' ? await entnehmen(gefasst, chatId)
       : richtung === 'reservieren' ? await reservieren(gefasst, chatId)
       : await freigeben(gefasst, chatId);
+
+    await erneuereSchreibweisenDoku();
 
     // Umrechnungen offenlegen — der Nutzer soll sehen, was aus seinen Worten wurde.
     if (hinweise.length) {
