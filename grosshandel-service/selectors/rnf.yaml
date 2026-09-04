@@ -1,0 +1,17 @@
+# RNF (Richter+Frenzel) — Selektoren und URLs.
+# Platzhalter — wird befuellt, sobald die Login-URL und die echten Selektoren
+# feststehen. Solange gibt /bestellung fuer RNF 501 zurueck.
+
+loginUrl: "https://shop.rnf.de/login"
+schnellErfassungUrl: "https://shop.rnf.de/schnellerfassung"
+
+selectors:
+  usernameInput: "input[name='username']"
+  passwordInput: "input[name='password']"
+  loginButton: "button[type='submit']"
+  artikelInput: "input[name='artikelnummer']"
+  mengeInput: "input[name='menge']"
+  hinzufuegenButton: "button.add-to-cart"
+  warenkorbButton: "a.cart-link"
+  abschickenButton: "button.submit-order"
+  bestellnummerSelector: ".order-confirmation-number"

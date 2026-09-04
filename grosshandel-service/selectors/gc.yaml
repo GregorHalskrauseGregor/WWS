@@ -1,0 +1,35 @@
+# GC-Gruppe (gconlineplus.de) — Selektoren und URLs.
+#
+# Diese Datei enthaelt ALLES, was der Playwright-Service wissen muss, um auf
+# der GC-Website zu navigieren. Aendert sich das Portal (neue Buttons, neue
+# Klassen, neue URLs), wird NUR diese Datei angefasst — der Service-Code
+# bleibt unveraendert.
+#
+# Pflicht-Felder (der Service wirft sonst 501 / Fehler beim Bestellversuch):
+#   loginUrl               Direkt-URL der Login-Seite
+#   schnellErfassungUrl    URL, unter der die Schnellerfassung erreichbar ist
+#   selectors.usernameInput CSS-Selector fuer das User-Feld
+#   selectors.passwordInput CSS-Selector fuer das Passwort-Feld
+#   selectors.loginButton   CSS-Selector fuer den Login-Button
+#   selectors.artikelInput  CSS-Selector fuer das Art-Nr-Feld in der Schnellerfassung
+#   selectors.mengeInput    CSS-Selector fuer das Mengen-Feld
+#   selectors.hinzufuegenButton CSS-Selector fuer "In Warenkorb" o.ae.
+#   selectors.warenkorbButton   CSS-Selector fuer den Sprung in den Warenkorb
+#   selectors.abschickenButton  CSS-Selector fuer "Bestellung absenden" o.ae.
+#   selectors.bestellnummerSelector CSS-Selector, dessen Textinhalt die Auftragsnr. ist
+
+loginUrl: "https://gconlineplus.de/login"
+schnellErfassungUrl: "https://gconlineplus.de/schnellerfassung"
+
+selectors:
+  # TODO: einmal manuell im Browser durchklicken und die echten Selektoren
+  # einsetzen. Bis dahin ist /bestellung abgeschaltet und gibt 501 zurueck.
+  usernameInput: "input[name='username']"
+  passwordInput: "input[name='password']"
+  loginButton: "button[type='submit']"
+  artikelInput: "input[name='artikelnummer']"
+  mengeInput: "input[name='menge']"
+  hinzufuegenButton: "button.add-to-cart"
+  warenkorbButton: "a.cart-link"
+  abschickenButton: "button.submit-order"
+  bestellnummerSelector: ".order-confirmation-number"

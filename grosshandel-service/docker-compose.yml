@@ -1,0 +1,25 @@
+# Docker-Compose fuer den Grosshandel-Service auf der Hetzner-Box.
+#
+# Start:  docker compose up -d
+# Stop:   docker compose down
+# Logs:   docker compose logs -f
+# Update: git pull && docker compose up -d --build
+
+services:
+  grosshandel:
+    build: .
+    container_name: grosshandel
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    volumes:
+      - ./selectors:/app/selectors:ro
+      - ./data/storage:/app/data/storage
+      - ./screenshots:/app/screenshots
+      - ./logs:/app/logs
+    # Weniger Speicherbedarf: 2 GB reichen fuer 1-2 parallele Browser-Sessions
+    mem_limit: 2g
+    # CPU-Shares, damit der Service nicht den ganzen Host frisst
+    cpus: 1.5
