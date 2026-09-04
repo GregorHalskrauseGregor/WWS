@@ -64,11 +64,11 @@ const LAGERIST = 900002;
     assert.equal(rollen.rolleVon(LAGERIST), 'monteur', 'Rolle wurde trotzdem gesetzt');
   });
 
-  await pruefe('Rolle wird erst bei /options end geschrieben', () => {
+  await pruefe('Rolle wird erst bei /verlassen geschrieben', () => {
     const { daten } = optionen.oeffne(LAGERIST, 'test-kennwort');
     const vorgemerkt = optionen.verarbeite(LAGERIST, '/zuLagerist', daten);
     assert.equal(rollen.rolleVon(LAGERIST), 'monteur', 'zu früh gespeichert');
-    const ende = optionen.verarbeite(LAGERIST, '/options end', vorgemerkt.daten);
+    const ende = optionen.verarbeite(LAGERIST, '/verlassen', vorgemerkt.daten);
     assert.equal(ende.beenden, true);
     assert.equal(rollen.rolleVon(LAGERIST), 'lagerist');
   });
@@ -77,8 +77,26 @@ const LAGERIST = 900002;
     // Ein Modus, den man nur mit dem exakt richtigen Befehl verlassen kann,
     // sperrt beim ersten Vertipper den ganzen Bot.
     const { daten } = optionen.oeffne(MONTEUR, null);
-    for (const wort of ['fertig', 'ende', 'abbrechen', 'exit', '/options end']) {
+    for (const wort of ['/verlassen', 'fertig', 'ende', 'abbrechen', 'exit', 'zurück', '/einstellungen ende']) {
       assert.equal(optionen.verarbeite(MONTEUR, wort, daten).beenden, true, `"${wort}" schließt nicht`);
+    }
+  });
+
+  await pruefe('/reset sagt ehrlich, dass es noch nichts tut', () => {
+    const { daten } = optionen.oeffne(MONTEUR, null);
+    const r = optionen.verarbeite(MONTEUR, '/reset', daten);
+    assert.ok(!r.beenden, '/reset hat die Einstellungen geschlossen');
+    assert.match(r.text, /noch nicht|gibt es noch nicht/i);
+  });
+
+  await pruefe('Wartungsbefehle nur mit Admin', () => {
+    const ohne = optionen.oeffne(MONTEUR, null);
+    const mit = optionen.oeffne(MONTEUR, 'test-kennwort');
+    for (const b of optionen.ADMIN_BEFEHLE) {
+      assert.ok(!optionen.verarbeite(MONTEUR, '/' + b, ohne.daten).durchlassen,
+        `/${b} lief ohne Admin durch`);
+      assert.equal(optionen.verarbeite(MONTEUR, '/' + b, mit.daten).durchlassen, true,
+        `/${b} wird im Admin-Bereich nicht durchgelassen`);
     }
   });
 

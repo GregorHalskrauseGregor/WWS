@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const libPdf = require('../lib/pdf');
+const aufmassPdf = require('../lib/aufmass_pdf');
 const libPdfReader = require('../lib/pdf_reader');
 const libPdfFiller = require('../lib/pdf_filler');
 const libUnterschrift = require('../lib/unterschrift');
@@ -88,12 +89,37 @@ async function erzeugePdf(chatId, daten) {
   const nr = String(daten.projektnummer || 'ohne-nr').replace(/[^A-Za-z0-9_-]/g, '_');
   const ziel = path.join(ordner, `Aufmass_${nr}_${datum}.pdf`);
 
-  const vorlage = findeVorlage();
-  if (vorlage && await libPdfReader.hatAcroFormFelder(vorlage)) {
-    const feldNamen = await libPdfFiller.ladeFeldNamen(vorlage);
-    return await libPdfFiller.fuelleFelder(vorlage, mappeDatenAufFelder(feldNamen, daten), ziel);
+  // Regelfall: der vermessene Zienert-Vordruck. Der Generator setzt die Felder
+  // selbst und legt so viele Blätter an, wie Positionen da sind.
+  if (fs.existsSync(aufmassPdf.VORDRUCK)) {
+    const unterschrift = ladeUnterschrift(chatId);
+    const r = await aufmassPdf.erstelle({
+      projektnummer: daten.projektnummer,
+      bauvorhaben: daten.bauvorhaben,
+      datum: daten.datum || new Date().toLocaleDateString('de-DE'),
+      positionen: (daten.positionen || []).map((p) => ({
+        menge: p.menge, me: p.einheit || p.me, artikelnr: p.artikelnr,
+        bezeichnung: p.bezeichnung, ep: p.ep, gp: p.gp
+      })),
+      unterschrift
+    }, ziel);
+    return r.pfad;
   }
-  return await libPdf.erstelleAufmass(alsFormularDaten(daten), ziel);
+
+  // Ohne Vordruck: das alte, selbst gezeichnete Blatt. Bleibt als Rückfall,
+  // damit ein fehlendes Bild nicht das ganze Aufmaß verhindert.
+  return libPdf.erstelleAufmass(alsFormularDaten(daten), ziel);
+}
+
+// Die hinterlegte Unterschrift des Monteurs, falls vorhanden. Sie wird als
+// BILD eingesetzt, nicht in ein Formularfeld — ein Feld ließe sich nachträglich
+// überschreiben.
+function ladeUnterschrift(chatId) {
+  try {
+    if (!libUnterschrift.hatUnterschrift(chatId)) return null;
+    return fs.readFileSync(libUnterschrift.getUnterschriftPfad(chatId));
+  } catch { /* keine hinterlegt */ }
+  return null;
 }
 
 // ──────────────────────────────────────────────────────────────── Experte

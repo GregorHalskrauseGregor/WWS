@@ -323,6 +323,67 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
     }
   });
 
+  console.log('\n── Hilfe und Befehle laufen nicht auseinander ──');
+
+  pruefe('jeder registrierte Kernbefehl steht in /befehle', () => {
+    // Ein Befehl, den es gibt, der aber nirgends dokumentiert ist, existiert
+    // fuer den Nutzer nicht. Und einer, der dokumentiert ist, aber nicht mehr
+    // registriert, ist ein Versprechen, das ins Leere laeuft.
+    const hilfe = require('../hilfe');
+    const quelle = fs.readFileSync(path.join(__dirname, '..', 'adapter/telegram.js'), 'utf-8');
+    const registriert = new Set();
+    const muster = /(?:befehl|adminBefehl)\(\/\^\\\/(?:\(\?:)?([a-z_|]+)/g;
+    let m;
+    while ((m = muster.exec(quelle))) {
+      for (const name of m[1].split('|')) registriert.add(name);
+    }
+    // Der generische /storno_rXXXX-Umweg ist kein eigener Befehl.
+    registriert.delete('a-z_');
+
+    const dokumentiert = new Set(hilfe.KERNBEFEHLE.map((b) => b.name));
+    dokumentiert.add('options');       // alter Name, absichtlich noch gueltig
+    dokumentiert.add('delete');        // /delete_my_data faengt der Regex verkuerzt
+
+    for (const name of registriert) {
+      assert(dokumentiert.has(name), `/${name} ist registriert, steht aber nicht in hilfe.js`);
+    }
+    for (const b of hilfe.KERNBEFEHLE) {
+      const da = registriert.has(b.name) ||
+        (b.name === 'delete_my_data' && registriert.has('delete')) ||
+        (b.name === 'einstellungen' && registriert.has('einstellungen'));
+      assert(da, `/${b.name} steht in hilfe.js, ist aber nicht registriert`);
+    }
+  });
+
+  pruefe('Wartungsbefehle stehen nicht in der offenen Liste', () => {
+    const hilfe = require('../hilfe');
+    const text = hilfe.befehleText(1);
+    for (const name of require('../optionen').ADMIN_BEFEHLE) {
+      assert(!text.includes('/' + name), `/${name} steht in /befehle, gehört aber in den Admin-Bereich`);
+    }
+  });
+
+  pruefe('/start nennt jeden aktiven Experten', () => {
+    const hilfe = require('../hilfe');
+    const text = hilfe.startText(1);
+    for (const e of experten.listeStatus().filter((x) => x.implementiert)) {
+      assert(text.includes(e.name), `Experte "${e.name}" fehlt in /start`);
+    }
+  });
+
+  pruefe('/start verweist auf die beiden Einstiege', () => {
+    const text = require('../hilfe').startText(1);
+    assert(text.includes('/befehle'), '/befehle fehlt');
+    assert(text.includes('/einstellungen'), '/einstellungen fehlt');
+  });
+
+  pruefe('/start sagt, was man schicken kann', () => {
+    const text = require('../hilfe').startText(1);
+    for (const wort of ['Sprachnachricht', 'PDF', 'Foto', 'Text']) {
+      assert(new RegExp(wort, 'i').test(text), `Eingabeart "${wort}" wird nicht erwähnt`);
+    }
+  });
+
   console.log('\n── Dienste-Registry ──');
   const fachdienste = require('../dienste');
   pruefe('alle vier Arten registriert', () => {
