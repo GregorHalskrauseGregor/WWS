@@ -70,6 +70,8 @@ const PFADE = {
   MATERIAL_XLSX: path.join(DATA, 'material.xlsx'),
   PROTOKOLL: path.join(DATA, 'protokoll.txt'),
   BEGRUESSUNG: path.join(DATA, 'begruessung.txt'),
+  RESERVIERUNGEN: path.join(DATA, 'reservierungen'),
+  RESERVIERUNG: (id) => path.join(DATA, 'reservierungen', `${id}.json`),
 
   // Pro-User-Ablage
   user: (chatId) => path.join(DATA, 'users', String(chatId)),

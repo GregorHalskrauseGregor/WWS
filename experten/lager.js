@@ -11,6 +11,9 @@
 const material = require('../material');
 const libExcel = require('../lib/excel');
 const schreibweisen = require('../lib/schreibweisen');
+const reservierungen = require('../reservierungen');
+const lagerNachricht = require('../lib/lager_nachricht');
+const benutzer = require('../benutzer');
 const fs = require('fs');
 const path = require('path');
 const { PFADE } = require('../config');
@@ -118,7 +121,31 @@ async function reservieren(daten, chatId) {
     }
     return t;
   });
-  return { text: `🔖 *Reserviert*\n${zeilen.join('\n')}\n\n_Reserviertes Material ist für andere gesperrt._` };
+  // Was tatsaechlich vorgemerkt werden konnte, wird zum Vorgang mit Nummer —
+  // erst dadurch kann der Lagerist sie bestaetigen und der Monteur sie
+  // nachschlagen. Nicht vorgemerktes gehoert nicht in den Auftrag: der Lagerist
+  // soll nicht nach Material suchen, das der Bot selbst als fehlend kennt.
+  const vorgemerkt = ergebnisse
+    .filter((r) => !r.unbekannt && r.reserviert > 0)
+    .map((r) => ({ bezeichnung: r.bezeichnung, menge: r.reserviert, einheit: r.einheit }));
+
+  let nummer = '';
+  if (vorgemerkt.length) {
+    const profil = benutzer.ladeProfil(chatId);
+    const vorgang = reservierungen.anlegen({
+      monteurChatId: chatId,
+      monteurName: (profil && profil.displayName) || null,
+      positionen: vorgemerkt,
+      bemerkung: daten.bemerkung || null
+    });
+    nummer = `\n\n📋 Nummer *${vorgang.id}* — der Lagerist bekommt sie zur Bestätigung.` +
+      '\n_Status jederzeit unter /reservierungen._';
+  }
+
+  return {
+    text: `🔖 *Reserviert*\n${zeilen.join('\n')}${nummer}` +
+      '\n\n_Reserviertes Material ist für andere gesperrt._'
+  };
 }
 
 async function freigeben(daten, chatId) {
@@ -218,14 +245,52 @@ module.exports = {
     },
     {
       name: 'reservierungen',
-      beschreibung: 'Zeigt, was du gerade vorgemerkt hast',
+      beschreibung: 'Zeigt deine Reservierungen mit Nummer, Zeitpunkt und Status',
       ausfuehren: async ({ chatId }) => {
-        const meine = material.reservierungenVon(await material.leseAlle(PFADE.MATERIAL_XLSX), chatId);
-        if (!meine.length) return { text: '🔖 Du hast gerade nichts reserviert.' };
-        return {
-          text: '🔖 *Deine Reservierungen:*\n' +
-            meine.map((r) => zeile(`${r.bezeichnung}: ${r.menge} ${r.einheit}`)).join('\n')
+        const vorgaenge = reservierungen.vonMonteur(chatId);
+        const imLager = material.reservierungenVon(await material.leseAlle(PFADE.MATERIAL_XLSX), chatId);
+
+        if (!vorgaenge.length && !imLager.length) {
+          return { text: '🔖 Du hast gerade nichts reserviert.' };
+        }
+
+        const zeichen = {
+          offen: '🟡 wartet auf den Lageristen',
+          in_arbeit: '🔵 wird gerade geprüft',
+          bereitgestellt: '📦 liegt bereit (ausgebucht)',
+          reserviert: '✅ bestätigt, liegt im Regal',
+          abgelehnt: '❌ abgelehnt'
         };
+
+        const zeilen = ['🔖 *Deine Reservierungen*', ''];
+        for (const v of vorgaenge.slice(0, 15)) {
+          const b = reservierungen.bilanz(v);
+          zeilen.push(`*${v.id}* · ${lagerNachricht.zeitpunkt(v.erstelltAm)}`);
+          zeilen.push(`   ${zeichen[v.status] || v.status}`);
+          for (const p of v.positionen) {
+            const marke = p.bestaetigt === null ? '·'
+              : p.bestaetigt >= p.menge ? '✅' : p.bestaetigt > 0 ? '🟠' : '❌';
+            const menge = p.bestaetigt !== null && p.bestaetigt < p.menge
+              ? `${p.bestaetigt} statt ${p.menge}` : `${p.menge}`;
+            zeilen.push(`   ${marke} ${menge} ${p.einheit}  ${p.bezeichnung}`);
+          }
+          if (b.fehlendeListe.length && v.status !== 'offen') {
+            zeilen.push(`   _${b.fehlendeListe.length} Position(en) fehlen ganz oder teilweise._`);
+          }
+          zeilen.push('');
+        }
+        if (vorgaenge.length > 15) zeilen.push(`_… und ${vorgaenge.length - 15} ältere._`);
+
+        // Alte Vormerkungen ohne Vorgangsnummer (aus der Zeit vor den
+        // Reservierungsnummern) wuerden sonst spurlos verschwinden.
+        const bekannt = new Set(vorgaenge.flatMap((v) => v.positionen.map((p) => p.bezeichnung)));
+        const ohneNummer = imLager.filter((r) => !bekannt.has(r.bezeichnung));
+        if (ohneNummer.length) {
+          zeilen.push('_Ohne Nummer vorgemerkt:_');
+          for (const r of ohneNummer) zeilen.push(`   · ${r.menge} ${r.einheit}  ${r.bezeichnung}`);
+        }
+
+        return { text: zeilen.join('\n') };
       }
     }
   ],

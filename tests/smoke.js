@@ -298,11 +298,27 @@ console.log('\n── Router-Validierung (Fake-Modell) ──');
   pruefe('kein Experten-Name in Kern, Adapter oder Einstieg', () => {
     const ids = experten.alleExperten().map((e) => e.id);
     for (const datei of ['kern/orchestrator.js', 'kern/router.js', 'kern/vorgangsmotor.js',
-                         'kern/werkzeuge.js', 'adapter/telegram.js', 'bot.js']) {
+                         'kern/werkzeuge.js', 'kern/modus.js', 'adapter/telegram.js',
+                         'adapter/telegram_lager.js', 'bot.js']) {
       const quelle = fs.readFileSync(path.join(__dirname, '..', datei), 'utf-8');
       for (const id of ids) {
         assert(!quelle.includes(`'${id}'`) && !quelle.includes(`"${id}"`),
           `${datei} nennt den Experten "${id}" beim Namen`);
+      }
+    }
+  });
+
+  pruefe('kein Adapter bucht selbst Bestand', () => {
+    // Ein Adapter uebersetzt Nachrichten. Sobald er anfaengt, Mengen zu
+    // veraendern, gibt es die Buchungsregeln zweimal — und beim naechsten Kanal
+    // ein drittes Mal. Genau so war bot.js auf 1134 Zeilen gewachsen.
+    const verboten = ['entnehmePositionen', 'addierePositionen', 'setzeBestand',
+      'reservierePositionen', 'gibReservierungFrei'];
+    for (const datei of ['adapter/telegram.js', 'adapter/telegram_lager.js']) {
+      const quelle = fs.readFileSync(path.join(__dirname, '..', datei), 'utf-8');
+      for (const fn of verboten) {
+        assert(!quelle.includes(`material.${fn}`),
+          `${datei} bucht selbst: material.${fn}()`);
       }
     }
   });

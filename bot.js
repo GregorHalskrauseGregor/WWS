@@ -20,6 +20,7 @@ require('dotenv').config();
 
 const fs = require('fs');
 const { PFADE } = require('./config');
+const lagerAdapter = require('./adapter/telegram_lager');
 const { getProvider, uebersicht } = require('./providers');
 const fachdienste = require('./dienste');
 const experten = require('./experten');
@@ -73,3 +74,8 @@ console.log(`Experten: ${geladen.filter((e) => e.implementiert).map((e) => e.id)
   (geladen.some((e) => !e.implementiert)
     ? ` | Stubs: ${geladen.filter((e) => !e.implementiert).map((e) => e.id).join(', ')}` : ''));
 adapter.starte({ token, provider: chatProvider, antwortChat, routerChat, extraktionChat, summaryChat });
+
+// Zweiter Bot, nur fuer den Lageristen. Faellt aus, wenn kein Token gesetzt ist —
+// der normale Betrieb laeuft dann unveraendert weiter, nur bekommt niemand die
+// Reservierungen zur Bestaetigung.
+lagerAdapter.starte({ token: process.env.TELEGRAM_LAGER_TOKEN });

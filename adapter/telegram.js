@@ -12,6 +12,9 @@ const path = require('path');
 const TelegramBot = require('node-telegram-bot-api');
 
 const { SCHWELLEN, PFADE } = require('../config');
+const modus = require('../kern/modus');
+const optionen = require('../optionen');
+const benachrichtigung = require('../benachrichtigung');
 const orchestrator = require('../kern/orchestrator');
 const experten = require('../experten');
 const themen = require('../themen');
@@ -164,6 +167,38 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
 
   // ───────────────────────────────────────────────────────── Eingangs-Handler
 
+  // Solange ein exklusiver Modus laeuft, geht NICHTS anderes durch — weder
+  // Befehle noch Text. Registriert wird deshalb ueber diesen Wrapper und nicht
+  // direkt ueber bot.onText: sonst haette jeder neue Befehl die Sperre vergessen.
+  function befehl(muster, handler) {
+    bot.onText(muster, async (msg, m) => {
+      if (await modusFaengtAb(msg)) return;
+      return handler(msg, m);
+    });
+  }
+
+  // Gibt true zurueck, wenn die Nachricht vom laufenden Modus verarbeitet wurde.
+  async function modusFaengtAb(msg) {
+    const chatId = msg.chat.id;
+    const aktiv = modus.aktiv(chatId);
+    if (!aktiv) return false;
+
+    const text = (msg.text || '').trim();
+
+    if (aktiv.art === 'options') {
+      const r = optionen.verarbeite(chatId, text, aktiv.daten);
+      if (r.beenden) modus.beende(chatId);
+      else if (r.daten) modus.aktualisiere(chatId, r.daten);
+      await sendeText(chatId, r.text);
+      return true;
+    }
+
+    // Unbekannter Modus: nicht stillschweigend schlucken, sondern sagen, was los ist.
+    await sendeText(chatId,
+      '⏸ Gerade läuft etwas anderes. Schließ das erst ab, dann geht es hier weiter.');
+    return true;
+  }
+
   bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
 
@@ -179,6 +214,10 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       await sendeText(chatId, `👋 Hallo${name}! Schreib einfach los — oder tipp /start für die Anleitung.`);
       schreibeEintrag('Info', `Neuer User: ${userState.profil.chatId}`);
     }
+
+    // Modus zuerst: eine Nachricht, die waehrend der Einstellungen hereinkommt,
+    // darf nicht nebenher verarbeitet werden.
+    if (await modusFaengtAb(msg)) return;
 
     // Text
     if (msg.text) {
@@ -353,9 +392,9 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
 
   const antworte = (msg, text) => sendeText(msg.chat.id, text);
 
-  bot.onText(/^\/start\b/, async (msg) => antworte(msg, ladeBegruessung()));
+  befehl(/^\/start\b/, async (msg) => antworte(msg, ladeBegruessung()));
 
-  bot.onText(/^\/themen\b/, (msg) => {
+  befehl(/^\/themen\b/, (msg) => {
     const index = themen.ladeIndex(msg.chat.id);
     if (index.length === 0) {
       return antworte(msg, 'Du hast noch keine Themen. Schreib einfach los — das erste wird automatisch angelegt.');
@@ -370,12 +409,12 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     return antworte(msg, 'Deine Themen:\n' + zeilen.join('\n'));
   });
 
-  bot.onText(/^\/neu(?:\s+(.+))?/, (msg, m) => {
+  befehl(/^\/neu(?:\s+(.+))?/, (msg, m) => {
     const t = themen.erstelleThema(msg.chat.id, (m && m[1] && m[1].trim()) || 'Neues Thema');
     return antworte(msg, `Neues Thema „${t.name}" angelegt.`);
   });
 
-  bot.onText(/^\/thema(?:\s+(.+))?/, (msg, m) => {
+  befehl(/^\/thema(?:\s+(.+))?/, (msg, m) => {
     const suche = m && m[1] && m[1].trim();
     if (!suche) return antworte(msg, 'Benutzung: /thema <Name>');
     const t = themen.findeThemaMitName(msg.chat.id, suche);
@@ -387,20 +426,20 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     return antworte(msg, `Verlauf von „${t.name}":\n` + zeilen.join('\n'));
   });
 
-  bot.onText(/^\/umbenennen\s+(\S+)\s+(.+)/, (msg, m) => {
+  befehl(/^\/umbenennen\s+(\S+)\s+(.+)/, (msg, m) => {
     const t = themen.findeThemaMitName(msg.chat.id, m[1]);
     if (!t) return antworte(msg, `Kein Thema mit „${m[1]}" gefunden.`);
     return antworte(msg, `Thema umbenannt in „${themen.benenneThemaUm(msg.chat.id, t.id, m[2]).name}".`);
   });
 
-  bot.onText(/^\/loeschen\s+(\S+)/, (msg, m) => {
+  befehl(/^\/loeschen\s+(\S+)/, (msg, m) => {
     const t = themen.findeThemaMitName(msg.chat.id, m[1]);
     if (!t) return antworte(msg, `Kein Thema mit „${m[1]}" gefunden.`);
     themen.loescheThema(msg.chat.id, t.id);
     return antworte(msg, `Thema „${t.name}" gelöscht.`);
   });
 
-  bot.onText(/^\/zusammenfassung(?:\s+(.+))?/, (msg, m) => {
+  befehl(/^\/zusammenfassung(?:\s+(.+))?/, (msg, m) => {
     const suche = m && m[1] && m[1].trim();
     const t = suche ? themen.findeThemaMitName(msg.chat.id, suche) : themen.ladeIndex(msg.chat.id)[0];
     if (!t) return antworte(msg, 'Noch kein Thema vorhanden.');
@@ -409,22 +448,22 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       ((voll && voll.summary) || '(noch keine — das Thema ist zu kurz)'));
   });
 
-  bot.onText(/^\/gedaechtnis\b/, (msg) => {
+  befehl(/^\/gedaechtnis\b/, (msg) => {
     const fakten = gedaechtnis.ladeFakten(msg.chat.id);
     if (!fakten.length) return antworte(msg, 'Das Langzeit-Gedächtnis ist noch leer. Schreib „merke dir: …".');
     return antworte(msg, 'Langzeit-Gedächtnis:\n' + fakten.map((f, i) => `${i + 1}. ${f}`).join('\n'));
   });
 
-  bot.onText(/^\/merke\s+(.+)/, (msg, m) => {
+  befehl(/^\/merke\s+(.+)/, (msg, m) => {
     const fakt = m[1].trim();
     return antworte(msg, gedaechtnis.fuegeHinzu(msg.chat.id, fakt) ? `Gemerkt: ${fakt}` : 'Steht schon drin.');
   });
 
-  bot.onText(/^\/vergiss\s+(\d+)/, (msg, m) =>
+  befehl(/^\/vergiss\s+(\d+)/, (msg, m) =>
     antworte(msg, gedaechtnis.entferneFakt(msg.chat.id, parseInt(m[1], 10) - 1)
       ? 'Fakt entfernt.' : 'Diese Nummer gibt es nicht. /gedaechtnis zeigt die Liste.'));
 
-  bot.onText(/^\/user\b/, (msg) => {
+  befehl(/^\/user\b/, (msg) => {
     const rl = ratelimit.status(msg.chat.id);
     const p = benutzer.ladeProfil(msg.chat.id);
     return antworte(msg,
@@ -436,7 +475,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       `Limits: ${rl.stunde}/h, ${rl.tag}/Tag, ${rl.tools} Tool-Calls/Tag`);
   });
 
-  bot.onText(/^\/wer_bin_ich\b/, (msg) => {
+  befehl(/^\/wer_bin_ich\b/, (msg) => {
     const p = benutzer.ladeProfil(msg.chat.id);
     if (!p) return antworte(msg, 'Kein Profil gefunden. Schreib erst eine Nachricht.');
     return antworte(msg, 'Dein Profil:\n' +
@@ -446,7 +485,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       `Letzter Kontakt: ${(p.lastSeen || '').slice(0, 19).replace('T', ' ')}`);
   });
 
-  bot.onText(/^\/delete[-_]my[-_]data\b/, (msg) => {
+  befehl(/^\/delete[-_]my[-_]data\b/, (msg) => {
     if (!benutzer.ladeProfil(msg.chat.id)) return antworte(msg, 'Du hast hier keine gespeicherten Daten.');
     const ok = benutzer.loescheAlles(msg.chat.id);
     if (ok) schreibeEintrag('Sicherheit', `User-Daten gelöscht auf Wunsch: ${msg.chat.id}`);
@@ -455,9 +494,9 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       : 'Konnte deine Daten nicht löschen — bitte beim Admin melden.');
   });
 
-  bot.onText(/^\/protokoll\b/, (msg) => antworte(msg, leseLetzte(20) || 'Das Protokoll ist noch leer.'));
+  befehl(/^\/protokoll\b/, (msg) => antworte(msg, leseLetzte(20) || 'Das Protokoll ist noch leer.'));
 
-  bot.onText(/^\/experten\b/, (msg) => {
+  befehl(/^\/experten\b/, (msg) => {
     const zeilen = experten.listeStatus().map((e) =>
       `${e.emoji} *${e.name}* — ${e.implementiert ? '✅ aktiv' : '🚧 Stub'} _(${e.art})_\n   ${e.beschreibung}` +
       (e.tools.length ? `\n   Werkzeuge: ${e.tools.join(', ')}` : '') +
@@ -466,7 +505,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       '\n\n_Schreib einfach los — der Router wählt automatisch._');
   });
 
-  bot.onText(/^\/komprimieren\b/, async (msg) => {
+  befehl(/^\/komprimieren\b/, async (msg) => {
     bot.sendChatAction(msg.chat.id, 'typing').catch(() => {});
     let gemacht = 0;
     for (const e of themen.ladeIndex(msg.chat.id)) {
@@ -481,7 +520,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     return antworte(msg, `Komprimierung fertig. ${gemacht} Thema/Themen verdichtet${ged ? ', Gedächtnis verdichtet' : ''}.`);
   });
 
-  bot.onText(/^\/options\b/, (msg) => {
+  befehl(/^\/options\b/, (msg) => {
     const p = path.join(PFADE.DATA, 'options.json');
     if (!fs.existsSync(p)) return antworte(msg, '❌ options.json nicht gefunden.');
     let o;
@@ -499,7 +538,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     return antworte(msg, zeilen.join('\n'));
   });
 
-  bot.onText(/^\/dienste\b/, (msg) => {
+  befehl(/^\/dienste\b/, (msg) => {
     const { uebersicht } = require('../providers');
     const rollen = uebersicht().map((r) =>
       `• ${r.rolle}: ${r.anbieter} (${r.modell})`).join('\n');
@@ -512,9 +551,20 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   });
 
   // Von Experten mitgebrachte Befehle — der Kern kennt sie nicht namentlich.
+  // /options und /options <kennwort>. Oeffnet den Modus, der alles andere anhaelt.
+  // Steht bewusst VOR den Experten-Befehlen: waere ein Experte auf den Namen
+  // "options" gekommen, wuerde er hier sonst die Einstellungen ueberschreiben.
+  befehl(/^\/options(?:\s+(.+))?\s*$/i, async (msg, m) => {
+    const chatId = msg.chat.id;
+    const { daten, text } = optionen.oeffne(chatId, m && m[1] ? m[1].trim() : null);
+    modus.starte(chatId, 'options', daten);
+    schreibeEintrag('Optionen', `geöffnet von ${chatId}${daten.admin ? ' (Admin)' : ''}`);
+    await sendeText(chatId, text);
+  });
+
   for (const cmd of experten.alleCommands()) {
-    const muster = new RegExp(`^\\/${cmd.name}(?:\\s+(.+))?\\s*$`);
-    bot.onText(muster, async (msg, m) => {
+    const muster = new RegExp(`^\\/${cmd.name}(?:\\s+(.+))?\\s*$`, 'i');
+    befehl(muster, async (msg, m) => {
       try {
         const ergebnis = await cmd.ausfuehren({
           chatId: msg.chat.id,
@@ -528,6 +578,10 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       }
     });
   }
+
+  // Der Lager-Bot schickt dem Monteur den Bescheid ueber DIESEN Bot — dort hat
+  // der Monteur seinen Chat, nicht im Lager-Bot.
+  benachrichtigung.registriere('hauptbot', (chatId, text) => sendeText(chatId, text));
 
   const cmdNamen = experten.alleCommands().map((c) => '/' + c.name);
   console.log(`Telegram-Adapter läuft. Experten-Befehle: ${cmdNamen.join(', ') || '(keine)'}`);
