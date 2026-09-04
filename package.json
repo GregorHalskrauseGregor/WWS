@@ -5,12 +5,13 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node tests/wissen.js && node tests/smoke.js && node tests/lager.js && node tests/reservierung.js && node tests/e2e.js",
+    "test": "node tests/wissen.js && node tests/smoke.js && node tests/lager.js && node tests/reservierung.js && node tests/pdf.js && node tests/e2e.js",
     "test:smoke": "node tests/smoke.js",
     "test:lager": "node tests/lager.js",
     "test:e2e": "node tests/e2e.js",
     "test:wissen": "node tests/wissen.js",
-    "test:reservierung": "node tests/reservierung.js"
+    "test:reservierung": "node tests/reservierung.js",
+    "test:pdf": "node tests/pdf.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
