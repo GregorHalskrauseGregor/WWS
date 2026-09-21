@@ -23,6 +23,7 @@
 
 const { extrahiere } = require('./json');
 const speicher = require('./vorgang');
+const themen = require('../themen');
 
 const ABBRUCH_MUSTER = /^\s*(stop|stopp|abbrechen|abbruch|reset|vergiss\s*es|verwerfen)\b/i;
 
@@ -38,6 +39,43 @@ const DOK_MAX_STUECKE = 40;
 const DOK_TOKENS = 3000;
 const MAX_LISTENEINTRAEGE = 500;
 const STAND_MAX_EINTRAEGE = 12;
+
+// ──────────────────────────────────────────────────── Vorgeschichte im Faden
+//
+// Ein frisch gestarteter Vorgang hat kein Gedaechtnis. Alles, was der Nutzer
+// VOR dem Start geschrieben hat, faellt sonst unter den Tisch — und genau das
+// passiert im haeufigsten Fall ueberhaupt:
+//
+//   User:  "bestell 10 Meblerbogen 16, 7 Meblerbogen 45 Grad, ..."
+//   Bot:   "Wohin soll geliefert werden?"          <- noch KEIN Vorgang offen
+//   User:  "zu in den Wassern 2"
+//   Bot:   Vorgang startet — und kennt nur die Adresse. Positionen: keine.
+//
+// Deshalb bekommt AUSSCHLIESSLICH die erste Extraktion eines neuen Vorgangs die
+// letzten Nutzernachrichten desselben Fadens mit. Bei jeder weiteren Nachricht
+// waere das schaedlich: dann kaemen schon verbuchte Positionen ein zweites Mal
+// an und die Liste haette alles doppelt.
+const VORGESCHICHTE_NACHRICHTEN = 3;
+const VORGESCHICHTE_ZEICHEN = 4000;
+
+function vorgeschichteDesFadens(chatId, themaId) {
+  try {
+    const thema = themen.ladeThema(chatId, themaId);
+    if (!thema || !Array.isArray(thema.messages)) return '';
+    // Die aktuelle Nachricht haengt noch NICHT im Faden — der Orchestrator
+    // schreibt sie erst nach der Verarbeitung an. Hier steht also wirklich nur
+    // das, was davor gesagt wurde.
+    const vom_nutzer = thema.messages
+      .filter((m) => m && m.rolle === 'user' && String(m.inhalt || '').trim())
+      .slice(-VORGESCHICHTE_NACHRICHTEN);
+    if (!vom_nutzer.length) return '';
+    let text = vom_nutzer.map((m) => String(m.inhalt).trim()).join('\n--- (naechste Nachricht) ---\n');
+    if (text.length > VORGESCHICHTE_ZEICHEN) text = text.slice(-VORGESCHICHTE_ZEICHEN);
+    return text;
+  } catch {
+    return '';
+  }
+}
 
 // ───────────────────────────────────────────────────────── Schema-Auswertung
 
@@ -254,7 +292,7 @@ Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, kein Markdown, kein Kommentar:
 
 // ─────────────────────────────────────────────────────────── Extraktions-Call
 
-function baueExtraktionsPrompt(experte, daten, wissensText, expertenKontext) {
+function baueExtraktionsPrompt(experte, daten, wissensText, expertenKontext, vorgeschichte) {
   const schema = experte.schema;
   const standJetzt = Object.keys(daten || {}).length
     ? JSON.stringify(daten, null, 2)
@@ -282,7 +320,7 @@ ${standJetzt}
 WICHTIG zu index: der Nutzer zählt ab 1, genau wie im angezeigten Stand. "Position 2" ist index 2.
 
 ════════ REGELN ════════
-- Gib NUR Operationen für das aus, was in DIESER Nachricht wirklich steht.
+- Gib NUR Operationen für das aus, was in DIESER Nachricht wirklich steht${vorgeschichte ? ' ODER im Abschnitt VORGESCHICHTE' : ''}.
 - Schon Erfasstes NICHT wiederholen — es bleibt automatisch erhalten.
 - "noch 3 Wandscheiben dazu" -> liste_hinzu. "Position 2 auf 5" -> liste_aendere.
   "Position 3 raus" -> liste_entferne. "war doch Heizung" -> setze auf das gemeinte Feld.
@@ -291,6 +329,16 @@ WICHTIG zu index: der Nutzer zählt ab 1, genau wie im angezeigten Stand. "Posit
 - Sagt er "stop", "abbrechen", "vergiss es": "abbruch": true.
 - Enthält die Nachricht gar keine Daten (Smalltalk, Rückfrage): leeres ops-Array.
 - Offensichtliche Diktier- und OCR-Fehler still korrigieren.
+${vorgeschichte ? `
+════════ VORGESCHICHTE ════════
+Diese Nachrichten hat der Nutzer unmittelbar VOR dieser hier geschrieben. Sie
+sind noch in KEINEN Stand eingeflossen — der Vorgang beginnt gerade erst.
+
+${vorgeschichte}
+
+Nimm daraus alles mit, was zu diesem Vorgang gehört (Positionen, Mengen, Namen,
+Nummern). Was nicht zum Vorgang gehört, lässt du weg. Widersprechen sich
+Vorgeschichte und aktuelle Nachricht, gilt die AKTUELLE Nachricht.` : ''}
 ${experte.extraktionsHinweise ? '\n════════ FACHLICHE HINWEISE ════════\n' + experte.extraktionsHinweise : ''}
 ${wissensText ? '\n════════ ' + wissensText : ''}
 ${expertenKontext ? '\n════════ LAGE VOR ORT ════════\n' + expertenKontext : ''}
@@ -362,19 +410,29 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt, wissensTe
     : [String(text || '').trim(), dok ? `\n\nInhalt der beigefügten Datei:\n${dok}` : ''].join('').trim();
 
   let vorgang = speicher.lade(chatId, themaId);
-  if (!vorgang || vorgang.experteId !== experte.id) {
+  const vorgangIstNeu = !vorgang || vorgang.experteId !== experte.id;
+  if (vorgangIstNeu) {
     vorgang = speicher.starte(chatId, themaId, experte.id);
   }
 
+  // Siehe Kopf von vorgeschichteDesFadens(): nur beim ersten Mal.
+  const vorgeschichte = vorgangIstNeu ? vorgeschichteDesFadens(chatId, themaId) : '';
+  if (vorgeschichte) {
+    dienste.protokoll?.('Vorgang',
+      `${experte.id}: neuer Vorgang, ${vorgeschichte.length} Zeichen Vorgeschichte aus dem Faden mitgelesen`);
+  }
+
   // Harter Abbruch ohne KI-Aufruf — spart einen Call bei einem klaren Wort.
-  if (ABBRUCH_MUSTER.test(eingabe)) {
+  // Geprueft wird die AKTUELLE Nachricht, nicht die Vorgeschichte: ein
+  // "abbrechen" von vorhin darf den neuen Vorgang nicht gleich wieder killen.
+  if (ABBRUCH_MUSTER.test(String(text || '').trim())) {
     speicher.loesche(chatId, themaId);
     return { text: `${experte.emoji || ''} ${experte.name}: Vorgang verworfen. Du kannst jederzeit neu anfangen.`.trim() };
   }
 
   // 1) KI schlägt Änderungen vor — aus der Nachricht ...
   let vorschlag = {};
-  if (eingabe) {
+  if (eingabe || vorgeschichte) {
     try {
       // Ein Experte darf vor der Extraktion Kontext beisteuern, den nur er kennt.
       // Beim Lager sind das die Schreibweisen, die zu dieser Nachricht passen —
@@ -389,7 +447,7 @@ async function verarbeite({ experte, chatId, themaId, text, dokInhalt, wissensTe
         }
       }
       vorschlag = extrahiere(await dienste.chat(
-        baueExtraktionsPrompt(experte, vorgang.daten, wissensText, expertenKontext), eingabe)) || {};
+        baueExtraktionsPrompt(experte, vorgang.daten, wissensText, expertenKontext, vorgeschichte), eingabe)) || {};
     } catch (err) {
       dienste.protokoll?.('Fehler', `Extraktion ${experte.id} (${chatId}/${themaId}): ${err.message}`);
       return { text: 'Ich konnte deine Angaben gerade nicht auswerten. Schick sie mir bitte nochmal.' };

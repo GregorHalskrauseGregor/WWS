@@ -40,8 +40,14 @@ const SCHWELLEN = {
   TELEGRAM_MAX: 3800,
 
   // Wie viele Nachrichten des Themas der Router als Kontext sieht.
-  ROUTER_VERLAUF_ANZAHL: 4,
-  ROUTER_VERLAUF_MAX_ZEICHEN: 600,
+  //
+  // 600 Zeichen waren zu knapp: eine Bestellung mit zehn Positionen ist allein
+  // schon laenger. Der Router sah dann nur noch das Ende des Verlaufs — also
+  // seine eigene Rueckfrage und die Antwort darauf, aber nicht mehr, worum es
+  // ueberhaupt ging. Damit kann er nicht erkennen, dass die Nachricht eine
+  // Fortsetzung ist, und faengt von vorn an.
+  ROUTER_VERLAUF_ANZAHL: 6,
+  ROUTER_VERLAUF_MAX_ZEICHEN: 2500,
 
   // Datei-Vorschau für den Router. Die Grenze gilt fürs Einlesen des Textes;
   // die Formularfeld-Analyse ist billig und laeuft bis zur Telegram-Obergrenze.

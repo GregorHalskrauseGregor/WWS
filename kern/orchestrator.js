@@ -113,6 +113,27 @@ async function verarbeiteBefehl(routing, params, dienste) {
     return beende(routing.hinweis || 'Schick mir die Datei dazu, dann lege ich sie ab.');
   }
 
+  // "nachfragen" MIT benanntem Experten ist keine echte Rueckfrage, sondern ein
+  // verschluckter Vorgang. Der Router hat ja erkannt, worum es geht — dann muss
+  // der Experte ran: der traegt ein, was schon dasteht, und fragt selbst nach,
+  // was fehlt. Genau dafuer ist der Vorgangsmotor gebaut.
+  //
+  // Vorher endete es hier mit einer freien Rueckfrage, ohne dass irgendwo ein
+  // Vorgang entstand. Die Antwort des Nutzers startete dann bei Null:
+  //
+  //   User: "bestell 10 Meblerbogen 16, 7 Meblerbogen 45 Grad, ..."
+  //   Bot:  "Wohin liefern?"        <- nachfragen, nichts gespeichert
+  //   User: "in den Wassern 2"
+  //   Bot:  Vorgang startet, Positionen: (noch keine)
+  if (routing.aktion === 'nachfragen' && routing.experte) {
+    const kandidat = experten.findeExperteMitId(routing.experte);
+    if (kandidat && kandidat.implementiert) {
+      dienste.protokoll?.('Router',
+        `nachfragen -> verarbeiten (${kandidat.id}): der Experte fragt selbst nach`);
+      routing = { ...routing, aktion: 'verarbeiten' };
+    }
+  }
+
   if (routing.aktion === 'nachfragen') {
     return beende(routing.hinweis || 'Kannst du mir dazu noch etwas mehr Kontext geben?');
   }

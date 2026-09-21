@@ -58,7 +58,7 @@ function juengstesThemaId(chatId) {
   return index.length ? index[0].id : null;
 }
 
-function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confidence, wissen }) {
+function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confidence, wissen, weitereBefehle }) {
   return {
     thema: themaId
       ? { id: themaId, name: null, neu: false }
@@ -69,7 +69,10 @@ function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confid
     wissen: Array.isArray(wissen) ? wissen : [],
     dok_typ: dokTyp || null,
     hinweis: hinweis || null,
-    confidence: typeof confidence === 'number' ? confidence : 0
+    confidence: typeof confidence === 'number' ? confidence : 0,
+    // Multi-Befehl-Modus: Array von Folge-Entscheidungen, jeder mit dem gleichen
+    // Schema. Leer/nicht vorhanden = Single-Command (alter Pfad).
+    weitere_befehle: Array.isArray(weitereBefehle) ? weitereBefehle : []
   };
 }
 
@@ -116,7 +119,8 @@ ENTSCHEIDUNGSREGELN:
 (2) Aktionswahl:
 - Läuft im gewählten Thema ein Vorgang, ist die Aktion fast immer "verarbeiten" mit dem Experten dieses Vorgangs. Auch wenn die Nachricht unvollständig ist ("DN20", "gebraucht", "noch 3 mehr") — der Experte sammelt weiter.
 - Läuft KEIN Vorgang und die Nachricht enthaelt einen klaren Wunsch, nimm den passenden Experten.
-- Eine Rückfrage, bei der du nicht weißt, wohin der Nutzer will: "nachfragen" mit einem kurzen, freundlichen Hinweis, was du brauchst.
+- Hat der Bot in der letzten Nachricht eine RÜCKFRAGE gestellt und die neue Nachricht beantwortet sie, dann ist das die Fortsetzung derselben Sache: gleiches Thema, "verarbeiten", und derselbe Experte, um den es in der Rückfrage ging. Niemals ein neuer Vorgang.
+- "nachfragen" NUR, wenn du wirklich nicht weißt, zu welchem Sachbereich die Nachricht gehört. Sobald du den Experten benennen kannst, nimm "verarbeiten" — der Experte trägt ein, was schon dasteht, und fragt selbst nach dem Rest. Eine Rückfrage von dir wirft alles weg, was der Nutzer bis dahin geschrieben hat.
 - "konversation" nur fuer Smalltalk und Rueckmeldungen, die mit keinem Sachbereich zu tun haben.
 ${dateiRegeln}
 
@@ -132,8 +136,20 @@ ${dateiRegeln}
 - Eine bewusste Aenderung des Themas ("ganz anderes Thema", "nebenbei", "zurueck zum Aufmass") startet ein neues Thema. Sonst nicht.
 - Du darfst auch bei subjektiv "schwierigen" Eingaben mutig entscheiden — der Nutzer kann jederzeit korrigieren. Lieber eine Entscheidung treffen und Hinweise geben als gar nichts entscheiden.
 
-FORMAT (genau so, eine Zeile):
-{"thema":"<themaId oder neu>","themaName":"<nur bei neu, 2-5 Wörter>","aktion":"<aktion>","experte":"<id oder null>","wissen":["<kartenId>"],"dok_typ":null,"hinweis":null,"confidence":0.0}`;
+(5) Multi-Befehl (weitere_befehle):
+- Wenn die Nachricht MEHRERE UNABHAENGIGE Aufgaben an verschiedene Experten enthaelt
+  (z. B. "bestell 5 Kugelhaehne, mach ein Aufmass fuer Badezimmer, such Anleitung PE-Rohr"),
+  pack die Folge-Aufgaben in "weitere_befehle" als Array. Jeder Eintrag hat das
+  GLEICHE Schema wie der Hauptbefehl (thema/themaName/aktion/experte/wissen/dok_typ/hinweis/confidence).
+- NICHT als Multi-Befehl werten: ein Auftrag mit mehreren Positionen
+  ("bestell diese 3 Artikel" = 1 Bestellbefehl, NICHT 3).
+- NICHT als Multi-Befehl werten: Folge-Aktionen am selben Experten
+  ("leg den Artikel an und aender die Beschreibung" = 1 Befehl, NICHT 2).
+- NICHT als Multi-Befehl werten: ein Fach-Befehl + ein Smalltalk-Anteil.
+- Im Zweifel: 1 Befehl statt falsch aufgeteilt.
+
+FORMAT (genau so, eine Zeile, weitere_befehle nur wenn vorhanden):
+{"thema":"<themaId oder neu>","themaName":"<nur bei neu, 2-5 Wörter>","aktion":"<aktion>","experte":"<id oder null>","wissen":["<kartenId>"],"dok_typ":null,"hinweis":null,"confidence":0.0,"weitere_befehle":[]}`;
 }
 
 // Zweiter Versuch, falls die erste Antwort leer blieb: minimal, damit auch ein
@@ -166,10 +182,23 @@ function baueVerlaufBlock(chatId) {
   try { verlauf = themen.letzteNachrichten(chatId, SCHWELLEN.ROUTER_VERLAUF_ANZAHL) || []; }
   catch { return ''; }
   if (verlauf.length === 0) return '';
-  let text = verlauf.map((m) => `${m.rolle === 'user' ? 'User' : 'Bot'}: ${m.inhalt}`).join('\n');
-  if (text.length > SCHWELLEN.ROUTER_VERLAUF_MAX_ZEICHEN) {
-    text = '...' + text.slice(-SCHWELLEN.ROUTER_VERLAUF_MAX_ZEICHEN);
+  // Von hinten auffuellen: die juengsten Nachrichten muessen VOLLSTAENDIG
+  // dastehen. Frueher wurde der fertige Block am Stueck abgeschnitten — dabei
+  // fiel regelmaessig der Anfang weg, also gerade die Nachricht, auf die sich
+  // die aktuelle bezieht. Lieber eine alte Nachricht ganz weglassen als die
+  // neueste zerstueckeln.
+  const zeilen = [];
+  let budget = SCHWELLEN.ROUTER_VERLAUF_MAX_ZEICHEN;
+  let gekuerzt = false;
+  for (let i = verlauf.length - 1; i >= 0; i--) {
+    const m = verlauf[i];
+    const zeile = `${m.rolle === 'user' ? 'User' : 'Bot'}: ${String(m.inhalt || '')}`;
+    if (zeile.length > budget) { gekuerzt = true; break; }
+    budget -= zeile.length;
+    zeilen.unshift(zeile);
   }
+  if (!zeilen.length) return '';
+  const text = (gekuerzt ? '(aeltere Nachrichten weggelassen)\n' : '') + zeilen.join('\n');
   return `\nLETZTE NACHRICHTEN (jüngstes Thema):\n${text}\n`;
 }
 
@@ -381,8 +410,60 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
     dokTyp: parsed.dok_typ,
     hinweis: parsed.hinweis,
     confidence,
-    wissen: gewaehlteKarten
+    wissen: gewaehlteKarten,
+    weitereBefehle: parseWeitereBefehle(parsed.weitere_befehle, liste, text, melde)
   });
 }
 
-module.exports = { entscheide, leiteThemaNamenAb, juengstesThemaId, dateiVorschau };
+// Multi-Befehle normalisieren: Schema-Validierung, Karten filtern, ungültige
+// verwerfen (ein einziger schlechter Folge-Befehl darf den Workflow nicht kippen).
+function parseWeitereBefehle(raw, expertenListe, originalText, melde) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const raus = [];
+  for (const b of raw) {
+    if (!b || typeof b !== 'object') continue;
+    let aktion = String(b.aktion || '').trim();
+    if (!erlaubtAktionen().includes(aktion)) {
+      // Modell hat die ID in aktion statt experte gesteckt — gleiche Korrektur
+      // wie beim Hauptbefehl.
+      if (findeExperteNachsichtig(expertenListe, aktion)) {
+        b.experte = aktion;
+        aktion = 'verarbeiten';
+      } else {
+        continue;
+      }
+    }
+    if (aktion === 'verarbeiten' && !findeExperteNachsichtig(expertenListe, b.experte)) {
+      melde(`Folge-Befehl verworfen — ungültiger Experte: ${b.experte}`);
+      continue;
+    }
+    const exp = aktion === 'verarbeiten'
+      ? findeExperteNachsichtig(expertenListe, b.experte)
+      : null;
+    const karten = (Array.isArray(b.wissen) ? b.wissen : [])
+      .map((w) => String(w || '').trim().toLowerCase())
+      .filter((w) => wissensbasis.karten().some((k) => k.id === w))
+      .slice(0, 4);
+    raus.push({
+      themaId: null,  // wird vom Orchestrator erstellt
+      themaName: b.themaName || leiteThemaNamenAb(originalText),
+      aktion,
+      experte: exp ? exp.id : null,
+      dokTyp: b.dok_typ || null,
+      hinweis: b.hinweis || null,
+      confidence: typeof b.confidence === 'number' ? b.confidence : 0,
+      wissen: karten
+    });
+  }
+  return raus;
+}
+
+function erlaubtAktionen() {
+  return ['verarbeiten', 'konversation', 'nachfragen',
+    'vorlage_speichern', 'style_speichern', 'dokument_speichern'];
+}
+
+module.exports = { entscheide, leiteThemaNamenAb, juengstesThemaId, dateiVorschau,
+  // nur fuer Tests: der Verlaufsblock ist die Stelle, an der dem Router frueher
+  // der Anfang eines Gespraechs abhanden kam.
+  _intern: { baueVerlaufBlock, baueThemenBlock } };
