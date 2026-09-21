@@ -47,6 +47,12 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   // Telegram meldet das sauber als 409. Bisher landete das im allgemeinen
   // Rauschen. Ab jetzt steht es in Klartext im Log — wer einmal danach gesucht
   // hat, soll es beim naechsten Mal sofort sehen.
+  // Die eigene ID, um in "X hat Y hinzugefuegt" zu erkennen, ob Y wir sind.
+  let eigeneId = null;
+  bot.getMe()
+    .then((me) => { eigeneId = me && me.id; })
+    .catch((err) => console.error('getMe fehlgeschlagen:', err.message));
+
   let konfliktZuletzt = 0;
   bot.on('polling_error', (err) => {
     const text = String((err && (err.message || err.code)) || err);
@@ -253,7 +259,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   //
   // Freier Text, Sprache, Fotos und Dateien laufen in der Gruppe normal — die
   // gehen durch kontoFuer() und landen beim richtigen Konto.
-  const BEFEHLE_IN_GRUPPEN = new Set(['faden_hierher']);
+  const BEFEHLE_IN_GRUPPEN = new Set(['faden_hierher', 'meine_gruppe']);
 
   function befehlsName(msg) {
     const m = String((msg && msg.text) || '').match(/^\/([A-Za-z0-9_]+)/);
@@ -263,6 +269,9 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   function befehl(muster, handler) {
     bot.onText(muster, (msg, m) => imThema(msg, async () => {
       if (gruppen.istGruppe(msg)) {
+        // Die Übernahme muss VOR kontoFuer laufen: die Gruppe hat ja noch kein
+        // Konto — sonst bräuchte es den Befehl nicht.
+        if (befehlsName(msg) === 'meine_gruppe') return handler(msg, m);
         const zugriff = await kontoFuer(msg);
         if (!zugriff) return;
         if (!BEFEHLE_IN_GRUPPEN.has(befehlsName(msg))) {
@@ -344,9 +353,11 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       // Telegram hat den Einlader nicht mitgeliefert. Einmal sagen, dann Ruhe.
       if (!merkeBehandelt(msg)) {
         await sendeText(gruppenId,
-          '👋 Ich bin da, aber diese Gruppe ist noch keinem Konto zugeordnet.\n\n' +
-          'Damit ich weiß, unter wessen Daten ich hier arbeite: entfernt mich einmal ' +
-          'und fügt mich neu hinzu. Wer mich hinzufügt, dem gehört die Gruppe.');
+          '👋 Ich bin da, aber diese Gruppe ist noch keinem Konto zugeordnet — ' +
+          'ich weiß also nicht, unter wessen Ablage ich hier arbeiten soll.\n\n' +
+          'Wenn sie dir gehören soll, schreib hier einmal `/meine_gruppe`.\n\n' +
+          '_Das geht nur, solange die Gruppe niemandem gehört, und nur für jemanden, ' +
+          'der mir schon einmal im Einzelchat den Zugangscode geschickt hat._');
       }
       return null;
     }
@@ -417,6 +428,28 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     // Nutzerdaten — fuer einen gesperrten Chat entsteht so kein einziger Ordner.
     // In der Gruppe uebernimmt kontoFuer() die Pruefung, mit anderen Regeln.
     if (!inGruppe && await gateFaengtAb(msg)) return;
+
+    // ── Ersatzweg zur Zuordnung ──────────────────────────────────────────
+    //
+    // my_chat_member ist der saubere Weg, aber er ist nicht der einzige, auf
+    // dem ein Bot in eine Gruppe kommt. Wird die Gruppe GLEICH MIT dem Bot
+    // angelegt ("Matthias hat die Gruppe «Dila» erstellt"), schicken manche
+    // Telegram-Clients nur die Dienstnachricht und kein my_chat_member. Die
+    // Gruppe bliebe dann für immer ohne Konto, und der Bot verwiese stur
+    // darauf, man möge ihn neu hinzufügen — obwohl man genau das getan hat.
+    if (inGruppe && !gruppen.besitzerVon(msg.chat.id) && msg.from) {
+      const binDabei = msg.group_chat_created === true ||
+        (Array.isArray(msg.new_chat_members) &&
+          msg.new_chat_members.some((u) => eigeneId != null && u && u.id === eigeneId));
+      if (binDabei) {
+        gruppen.registriereBesitzer(msg.chat.id, msg.from.id, msg.chat.title);
+        schreibeEintrag('Gruppen',
+          `Gruppe "${msg.chat.title || '?'}" (${msg.chat.id}) über Dienstnachricht ` +
+          `Konto ${msg.from.id} zugeordnet`);
+        await begruesseInGruppe(msg.chat, msg.from);
+        return;
+      }
+    }
 
     const zugriff = await kontoFuer(msg);
     if (!zugriff) return;
@@ -578,6 +611,19 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     return '';
   }
 
+  async function begruesseInGruppe(chat, einlader) {
+    const name = (einlader && (einlader.first_name || einlader.username)) || 'dir';
+    await sendeText(chat.id,
+      `👋 Bin dabei. Diese Gruppe gehört ab jetzt zum Konto von *${name}*.\n\n` +
+      `Alles, was hier entsteht — Aufmaße, Bestellungen, Notizen — liegt in ${name}s ` +
+      'Ablage und ist auch im Einzelchat mit mir da. Und umgekehrt.\n\n' +
+      (zugang.aktiv()
+        ? 'Mitreden kann jeder hier, der mir einmal im Einzelchat den Zugangscode ' +
+          'geschickt hat. Wen ich nicht kenne, den überhöre ich — hier nach dem Code ' +
+          'zu fragen hieße, ihn vor allen auszusprechen.'
+        : '⚠️ Es ist kein Zugangscode gesetzt. Damit kann hier jeder mit mir arbeiten.'));
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   // WER DEN BOT HINZUFÜGT, DEM GEHÖRT DIE GRUPPE
   // ════════════════════════════════════════════════════════════════════════
@@ -616,16 +662,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       schreibeEintrag('Gruppen',
         `Gruppe "${chat.title || '?'}" (${chat.id}) gehört jetzt zu Konto ${einlader.id}`);
 
-      const name = einlader.first_name || einlader.username || 'dir';
-      await sendeText(chat.id,
-        `👋 Bin dabei. Diese Gruppe gehört ab jetzt zum Konto von *${name}*.\n\n` +
-        `Alles, was hier entsteht — Aufmaße, Bestellungen, Notizen — liegt in ${name}s ` +
-        'Ablage und ist auch im Einzelchat mit mir da. Und umgekehrt.\n\n' +
-        (zugang.aktiv()
-          ? 'Mitreden kann jeder hier, der mir einmal im Einzelchat den Zugangscode ' +
-            'geschickt hat. Wen ich nicht kenne, den überhöre ich — hier nach dem Code ' +
-            'zu fragen hieße, ihn vor allen auszusprechen.'
-          : '⚠️ Es ist kein Zugangscode gesetzt. Damit kann hier jeder mit mir arbeiten.'));
+      await begruesseInGruppe(chat, einlader);
     } catch (err) {
       console.error('my_chat_member:', err.message);
       schreibeEintrag('Fehler', `Gruppen-Zuordnung: ${err.message}`);
@@ -922,6 +959,39 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       `✅ Dieser Chat ist jetzt der Faden *${name}*.\n\n` +
       'Schreib einfach los — ich arbeite hier genauso wie im Einzelchat und weiß bei jeder ' +
       'Nachricht, dass sie zu diesem Faden gehört.');
+  });
+
+  // Rettungsweg für Gruppen, die der Bot betreten hat, ohne dass eine
+  // Zuordnung entstand — etwa weil er dort schon war, bevor dieser Stand lief.
+  // Bewusst eng: nur in einer Gruppe, nur wenn sie NIEMANDEM gehört, und nur
+  // für jemanden, der freigeschaltet ist. Danach greift wieder die Regel, dass
+  // ein bestehender Besitzer nicht stillschweigend ausgetauscht wird.
+  befehl(/^\/meine_gruppe\b/i, async (msg) => {
+    if (!gruppen.istGruppe(msg)) {
+      return sendeText(msg.chat.id,
+        'Das funktioniert nur *in* einer Gruppe — schreib es dort hinein.');
+    }
+    const gruppenId = msg.chat.id;
+    const wer = msg.from || {};
+
+    const besitzer = gruppen.besitzerVon(gruppenId);
+    if (besitzer) {
+      return sendeText(gruppenId,
+        String(besitzer) === String(wer.id)
+          ? 'Diese Gruppe gehört bereits zu deinem Konto.'
+          : 'Diese Gruppe gehört schon einem anderen Konto. Wer sie übernehmen will, ' +
+            'muss mich erst entfernen und neu hinzufügen.');
+    }
+    if (zugang.aktiv() && !zugang.istFreigeschaltet(wer.id)) {
+      return sendeText(gruppenId,
+        'Dafür musst du mir zuerst im Einzelchat den Zugangscode schicken. ' +
+        '_Hier in der Gruppe bitte nicht — den läse jeder mit._');
+    }
+
+    gruppen.registriereBesitzer(gruppenId, wer.id, msg.chat.title);
+    schreibeEintrag('Gruppen',
+      `Gruppe "${msg.chat.title || '?'}" (${gruppenId}) per /meine_gruppe an Konto ${wer.id}`);
+    await begruesseInGruppe(msg.chat, wer);
   });
 
   // Nur DEINE Gruppen. Was andere mit dem Bot machen, geht dich nichts an —
