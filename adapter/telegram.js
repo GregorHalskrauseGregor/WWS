@@ -740,10 +740,39 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
 
   // ──────────────────────────────────────────────────────────── Knopfdrücke
 
+  // ══════════════════════════════════════════════════════════════════════
+  // QUITTIEREN KOMMT ZUERST
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Telegram laesst einen gedrueckten Knopf so lange blinken, bis der Bot
+  // answerCallbackQuery schickt — und danach noch bis zum eigenen Zeitlimit.
+  // Blinkt er zwanzig Sekunden und hoert dann einfach auf, heisst das: es kam
+  // NIE eine Quittung. Fuer den Nutzer ist das der schlimmste Fall, weil er
+  // nicht weiss, ob etwas passiert ist.
+  //
+  // Frueher wurde erst gearbeitet und dann quittiert. Jede Ausnahme auf dem Weg
+  // dahin — eine fehlende Datei, ein abgelaufener Vorgang, irgendetwas — liess
+  // den Knopf ins Leere laufen. Ab jetzt umgekehrt: erst quittieren, dann
+  // arbeiten, und was schiefgeht, kommt als lesbare Nachricht hinterher.
   bot.on('callback_query', (query) => imThema(query.message, async () => {
     const daten = query.data || '';
     const herkunft = (query.message && query.message.chat) || {};
     const ausGruppe = herkunft.type === 'group' || herkunft.type === 'supergroup';
+
+    // Damit im Log sichtbar ist, ob der Druck ueberhaupt ankommt. Ohne diese
+    // Zeile ist "der Knopf tut nichts" nicht von "der Knopf kommt nie an" zu
+    // unterscheiden — und das sind voellig verschiedene Baustellen.
+    schreibeEintrag('Knopf', `${daten} von ${(query.from && query.from.id) || '?'} in ${herkunft.id || '?'}`);
+
+    let quittiert = false;
+    const quittiere = (text) => {
+      if (quittiert) return;
+      quittiert = true;
+      bot.answerCallbackQuery(query.id, text ? { text, show_alert: true } : {})
+        .catch((err) => console.error('answerCallbackQuery:', err.message));
+    };
+
+    try {
 
     // Das Zugangs-Gate galt bisher nur fuer Nachrichten und Befehle. Ein
     // Knopfdruck kam daran vorbei — wer eine weitergeleitete Nachricht mit
@@ -752,10 +781,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     // Geprueft wird, wer DRUECKT, nicht wo der Knopf haengt.
     const druecker = (query.from && query.from.id) || null;
     if (zugang.aktiv() && !zugang.istFreigeschaltet(druecker)) {
-      bot.answerCallbackQuery(query.id, {
-        text: 'Du bist nicht freigeschaltet. Schick mir zuerst im Einzelchat den Zugangscode.',
-        show_alert: true
-      }).catch(() => {});
+      quittiere('Du bist nicht freigeschaltet. Schick mir zuerst im Einzelchat den Zugangscode.');
       return;
     }
 
@@ -767,9 +793,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     if (ausGruppe) {
       const besitzer = gruppen.besitzerVon(herkunft.id);
       if (!besitzer) {
-        bot.answerCallbackQuery(query.id, {
-          text: 'Diese Gruppe ist keinem Konto zugeordnet.', show_alert: true
-        }).catch(() => {});
+        quittiere('Diese Gruppe ist keinem Konto zugeordnet.');
         return;
       }
       chatId = besitzer;
@@ -784,19 +808,19 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       const [, id] = daten.split(':');
       const warten = offeneBestaetigungen.get(id);
       if (!warten) {
-        bot.answerCallbackQuery(query.id, { text: 'Abgelaufen oder unbekannt.' }).catch(() => {});
+        quittiere('Abgelaufen oder unbekannt.');
         return;
       }
       const erlaubt = daten.startsWith('tool_ok');
-      bot.answerCallbackQuery(query.id, { text: erlaubt ? 'Führe aus …' : 'Abgebrochen.' }).catch(() => {});
+      quittiere(erlaubt ? 'Führe aus …' : 'Abgebrochen.');
       knoepfeWeg();
       warten({ erlaubt, grund: erlaubt ? 'vom Nutzer erlaubt' : 'vom Nutzer abgelehnt' });
       return;
     }
 
     if (daten.startsWith('vorgang_')) {
+      quittiere();
       knoepfeWeg();
-      bot.answerCallbackQuery(query.id).catch(() => {});
       const [aktion, themaId] = daten.split(':');
       const ergebnis = aktion === 'vorgang_ok'
         ? await orchestrator.bestaetigeVorgang({ chatId, themaId }, dienste(chatId, ziel))
@@ -805,7 +829,25 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       return;
     }
 
-    bot.answerCallbackQuery(query.id).catch(() => {});
+      quittiere();
+    } catch (err) {
+      // Ein Fehler darf den Knopf nicht verschlucken. Quittieren, protokollieren,
+      // und dem Nutzer im Klartext sagen, was los ist.
+      console.error('Knopfdruck:', err);
+      schreibeEintrag('Fehler', `Knopfdruck ${daten}: ${err.message}`);
+      quittiere('Da ist etwas schiefgegangen.');
+      const wohin = herkunft.id;
+      if (wohin != null) {
+        await sendeText(wohin,
+          `Der Knopf hat nicht funktioniert: ${err.message}\n\n` +
+          '_Du kannst dasselbe auch schreiben — „passt" bestätigt, „abbrechen" verwirft._')
+          .catch(() => {});
+      }
+    } finally {
+      // Letzte Sicherung: falls oben irgendein Pfad das Quittieren uebersprungen
+      // hat, hoert der Knopf trotzdem auf zu blinken.
+      quittiere();
+    }
   }));
 
   // ───────────────────────────────────────────────────────────────── Commands
