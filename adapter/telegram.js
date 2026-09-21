@@ -35,6 +35,41 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   const bot = new TelegramBot(token, { polling: true });
   const offeneBestaetigungen = new Map();
 
+  // ───────────────────────────────────── Zweite Instanz erkennen und ansagen
+  //
+  // Laeuft derselbe Bot-Token an ZWEI Stellen — etwa noch auf dem Laptop und
+  // schon auf der Box —, verteilt Telegram die Nachrichten zufaellig auf beide.
+  // Nach aussen sieht das nach Spuk aus: mal antwortet der Bot, mal nicht;
+  // Knopfdruecke blinken zwanzig Sekunden und versanden; und wenn doch eine
+  // Antwort kommt, passt sie zum Stand der ANDEREN Instanz, nicht zu dem, was
+  // man selbst geschrieben hat.
+  //
+  // Telegram meldet das sauber als 409. Bisher landete das im allgemeinen
+  // Rauschen. Ab jetzt steht es in Klartext im Log — wer einmal danach gesucht
+  // hat, soll es beim naechsten Mal sofort sehen.
+  let konfliktZuletzt = 0;
+  bot.on('polling_error', (err) => {
+    const text = String((err && (err.message || err.code)) || err);
+    if (!/409|conflict|terminated by other getUpdates/i.test(text)) {
+      console.error('Telegram-Polling:', text);
+      return;
+    }
+    if (Date.now() - konfliktZuletzt < 60_000) return;   // nicht im Sekundentakt bruellen
+    konfliktZuletzt = Date.now();
+    console.error(
+      '\n══════════════════════════════════════════════════════════════════\n' +
+      '  ACHTUNG: derselbe Telegram-Token laeuft an ZWEI Stellen.\n' +
+      '\n' +
+      '  Telegram verteilt die Nachrichten dann zufaellig auf beide.\n' +
+      '  Folge: nur etwa jede zweite Nachricht kommt hier an, Knoepfe\n' +
+      '  blinken ins Leere, und Antworten passen nicht zum Verlauf.\n' +
+      '\n' +
+      '  Beende die andere Instanz — meist ein altes "npm start" auf dem\n' +
+      '  Laptop. Danach klaert sich das von selbst.\n' +
+      '══════════════════════════════════════════════════════════════════\n');
+    schreibeEintrag('Fehler', 'Telegram 409: zweite Bot-Instanz mit demselben Token');
+  });
+
   // ───────────────────────────────────────────────────────────── Ausgabe
 
   // ─────────────────────────────────────────── Antwort-Ziel in Forum-Gruppen
@@ -452,6 +487,21 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   bot.on('callback_query', (query) => imThema(query.message, async () => {
     const daten = query.data || '';
     const chatId = query.message && query.message.chat.id;
+
+    // Das Zugangs-Gate galt bisher nur fuer Nachrichten und Befehle. Ein
+    // Knopfdruck kam daran vorbei — wer eine weitergeleitete Nachricht mit
+    // Knoepfen hat, konnte damit einen Vorgang bestaetigen, ohne je den Code
+    // eingegeben zu haben. Eine Tuer neben der verschlossenen Tuer.
+    // WICHTIG: erst pruefen, ob der Zugangsschutz ueberhaupt scharf ist. Ohne
+    // gesetzten ZUGANGS_CODE ist NIEMAND "freigeschaltet" — eine Sperre allein
+    // auf istFreigeschaltet() haette dann saemtliche Knoepfe totgelegt.
+    if (chatId != null && zugang.aktiv() && !zugang.istFreigeschaltet(chatId)) {
+      bot.answerCallbackQuery(query.id, {
+        text: 'Dieser Chat ist nicht freigeschaltet. Schick dem Bot zuerst den Zugangscode.',
+        show_alert: true
+      }).catch(() => {});
+      return;
+    }
     const knoepfeWeg = () => {
       if (!query.message) return;
       bot.editMessageReplyMarkup({ inline_keyboard: [] },
