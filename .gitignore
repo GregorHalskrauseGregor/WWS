@@ -11,3 +11,6 @@ data/
 
 # Arbeitsmaterial, gehoert nicht ins Repo (36 MB Katalog-Rohtexte)
 Kataloge Shops/
+
+# Umzugspaket, wird bei Bedarf neu erzeugt
+wws-daten.zip
