@@ -15,6 +15,12 @@
 //         │
 //   experten/*.js         Fachlogik als Plugins (Auto-Load)
 //   providers/, dienste/  austauschbare KI-Anbieter und Fach-APIs
+//
+//   kern/auftragsstelle.js  Warteschlange fuer Arbeit, die NICHT hier laufen
+//   adapter/agent_http.js   kann — Browser-Navigation im Grosshaendler-Portal
+//                           muss auf dem Laptop stattfinden, weil GC
+//                           Rechenzentrums-IPs sperrt. Der Laptop holt sich die
+//                           Auftraege ab; die Box ruft ihn nie an.
 
 require('dotenv').config();
 
@@ -25,6 +31,9 @@ const { getProvider, uebersicht } = require('./providers');
 const fachdienste = require('./dienste');
 const experten = require('./experten');
 const adapter = require('./adapter/telegram');
+const benachrichtigung = require('./benachrichtigung');
+const auftragsstelle = require('./kern/auftragsstelle');
+const agentHttp = require('./adapter/agent_http');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
@@ -74,6 +83,46 @@ console.log(`Experten: ${geladen.filter((e) => e.implementiert).map((e) => e.id)
   (geladen.some((e) => !e.implementiert)
     ? ` | Stubs: ${geladen.filter((e) => !e.implementiert).map((e) => e.id).join(', ')}` : ''));
 adapter.starte({ token, provider: chatProvider, antwortChat, routerChat, extraktionChat, summaryChat });
+
+// ─────────────────────────────────────────────────────────────── Auftragsstelle
+//
+// Nur auf der Box: dort ist AGENT_TOKEN gesetzt. Laeuft der Bot lokal auf dem
+// Laptop (Direktbetrieb), bleibt das hier komplett aus und der Grosshandel-
+// Experte ruft den Playwright-Dienst weiterhin unmittelbar auf.
+if (process.env.AGENT_TOKEN) {
+  const z = auftragsstelle.starte();
+  console.log(`Auftragsstelle: ${z.offen} offen, ${z.gesamt} gesamt (${z.ordner})`);
+
+  // Wer das Ergebnis in Worte fasst, ist Sache des Fachexperten — der Kern
+  // kennt keine Bestellungen. Bewusst ueber alleExperten(): ein Experte, der
+  // gerade ueber werkzeuge.md abgeschaltet wurde, soll seinen noch laufenden
+  // Auftrag trotzdem zu Ende melden koennen.
+  auftragsstelle.beiErgebnis(async (auftrag) => {
+    if (!auftrag.chatId) return;
+    const zustaendig = experten.alleExperten()
+      .find((e) => (e.auftragsarten || []).includes(auftrag.art));
+    const meldung = zustaendig && typeof zustaendig.auftragsMeldung === 'function'
+      ? zustaendig.auftragsMeldung(auftrag)
+      : { text: `Auftrag \`${auftrag.id}\` ist jetzt: ${auftrag.zustand}.`, dateien: [] };
+
+    const r = await benachrichtigung.sende('hauptbot', auftrag.chatId, meldung.text, {
+      dateien: meldung.dateien || [],
+      ziel: auftrag.ziel || null
+    });
+    if (!r.gesendet) {
+      console.error(`Auftrag ${auftrag.id}: Meldung an ${auftrag.chatId} nicht zustellbar (${r.grund})`);
+    }
+  });
+
+  agentHttp.starte({
+    port: Number(process.env.AGENT_PORT || 8788),
+    host: process.env.AGENT_HOST || '0.0.0.0',
+    token: process.env.AGENT_TOKEN
+  });
+} else if (process.env.GROSSHANDEL_SERVICE_URL) {
+  console.log('Auftragsstelle aus (kein AGENT_TOKEN) — Grosshandel laeuft im Direktbetrieb ' +
+    `gegen ${process.env.GROSSHANDEL_SERVICE_URL}.`);
+}
 
 // Zweiter Bot, nur fuer den Lageristen. Faellt aus, wenn kein Token gesetzt ist —
 // der normale Betrieb laeuft dann unveraendert weiter, nur bekommt niemand die

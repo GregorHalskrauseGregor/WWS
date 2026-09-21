@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const registry = require('../kern/werkzeugregistry');
 
 const EXPERTEN_ORDNER = __dirname;
 const IGNORIEREN = new Set(['index.js']);
@@ -86,14 +87,66 @@ function alleExperten() {
   return _cache;
 }
 
-// Nur implementierte Experten — Stubs werden dem Router gar nicht erst
-// angeboten und können deshalb nicht versehentlich aktiviert werden.
-function implementierteExperten() {
-  return alleExperten().filter((e) => e.implementiert);
+// ────────────────────────────────────────────── Registry-Overlay (werkzeuge.md)
+//
+// Die Registry entscheidet, WELCHE Werkzeuge der Router sieht und WIE sie
+// beschrieben werden. Sie ist bewusst additiv: fehlt die Datei oder ein
+// Eintrag, verhaelt sich alles wie vorher. So kann ein Tippfehler in
+// werkzeuge.md nie den ganzen Bot lahmlegen.
+
+function istAktivLautRegistry(e) {
+  if (!registry.vorhanden()) return true;
+  const eintrag = registry.finde(e.id);
+  if (!eintrag) return true; // nicht eingetragen = wie bisher aktiv
+  return eintrag.aktiv;
 }
 
+function mitRegistry(e) {
+  const eintrag = registry.finde(e.id);
+  if (!eintrag) return e;
+  const wann = (eintrag.wann || '').trim();
+  const zusatzPrompt = registry.promptText(e.id);
+  const kombiniert = [e.systemPromptAdd, zusatzPrompt]
+    .filter((s) => s && String(s).trim()).join('\n\n');
+  return {
+    ...e,
+    name: eintrag.name || e.name,
+    // Leeres "Wann:" laesst den sorgfaeltig geschriebenen Modul-Text stehen.
+    zustaendigWenn: wann || e.zustaendigWenn,
+    ...(kombiniert ? { systemPromptAdd: kombiniert } : {}),
+    // Transitiv aufgeloest: bestellung -> lager -> lagerauskunft
+    braucht: registry.abhaengigkeiten(e.id),
+    _registry: eintrag
+  };
+}
+
+// Nur implementierte Experten — Stubs werden dem Router gar nicht erst
+// angeboten und können deshalb nicht versehentlich aktiviert werden.
+// Zusaetzlich gefiltert und angereichert durch werkzeuge.md.
+function implementierteExperten() {
+  return alleExperten()
+    .filter((e) => e.implementiert)
+    .filter(istAktivLautRegistry)
+    .map(mitRegistry);
+}
+
+// Bewusst OHNE Aktiv-Filter: laeuft noch ein Vorgang an einem gerade
+// abgeschalteten Experten, muss er zu Ende gefuehrt werden koennen.
 function findeExperteMitId(id) {
-  return alleExperten().find((e) => e.id === id) || null;
+  const e = alleExperten().find((x) => x.id === id);
+  return e ? mitRegistry(e) : null;
+}
+
+// Fuer die Diagnose: was steht in werkzeuge.md, und gibt es dazu ein Modul?
+function registryStatus() {
+  const ids = alleExperten().map((e) => e.id);
+  return {
+    datei: registry.DATEI,
+    vorhanden: registry.vorhanden(),
+    eintraege: registry.status(ids),
+    // Module ohne Registry-Eintrag laufen mit, sind aber undokumentiert.
+    ohneEintrag: ids.filter((id) => !registry.finde(id))
+  };
 }
 
 // Ist dieser Experte deklarativ (Schema) oder frei (eigene verarbeite)?
@@ -143,7 +196,7 @@ function listeStatus() {
 }
 
 // Nur für Tests: Cache leeren, damit neu geladen wird.
-function _resetCache() { _cache = null; }
+function _resetCache() { _cache = null; registry.neuLaden(); }
 
 module.exports = {
   ladeExperten,
@@ -155,5 +208,6 @@ module.exports = {
   alleCommands,
   expertenMitDateiHook,
   listeStatus,
+  registryStatus,
   _resetCache
 };

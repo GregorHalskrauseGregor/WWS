@@ -1,35 +1,173 @@
-# GC-Gruppe (gconlineplus.de) — Selektoren und URLs.
+# GC-Gruppe (gconlineplus.de) — Bestell-Flow.
 #
-# Diese Datei enthaelt ALLES, was der Playwright-Service wissen muss, um auf
-# der GC-Website zu navigieren. Aendert sich das Portal (neue Buttons, neue
-# Klassen, neue URLs), wird NUR diese Datei angefasst — der Service-Code
-# bleibt unveraendert.
+# Reihenfolge: Login -> Warenkorb-Liste -> Neuer Warenkorb -> Artikel hinzufügen -> Weiterleiten.
+# Die Service-Code-Schritte in server.js spiegeln diese Struktur 1:1 wider.
 #
-# Pflicht-Felder (der Service wirft sonst 501 / Fehler beim Bestellversuch):
-#   loginUrl               Direkt-URL der Login-Seite
-#   schnellErfassungUrl    URL, unter der die Schnellerfassung erreichbar ist
-#   selectors.usernameInput CSS-Selector fuer das User-Feld
-#   selectors.passwordInput CSS-Selector fuer das Passwort-Feld
-#   selectors.loginButton   CSS-Selector fuer den Login-Button
-#   selectors.artikelInput  CSS-Selector fuer das Art-Nr-Feld in der Schnellerfassung
-#   selectors.mengeInput    CSS-Selector fuer das Mengen-Feld
-#   selectors.hinzufuegenButton CSS-Selector fuer "In Warenkorb" o.ae.
-#   selectors.warenkorbButton   CSS-Selector fuer den Sprung in den Warenkorb
-#   selectors.abschickenButton  CSS-Selector fuer "Bestellung absenden" o.ae.
-#   selectors.bestellnummerSelector CSS-Selector, dessen Textinhalt die Auftragsnr. ist
+# A3-Commerce-Framework: IDs haben numerische Suffixe (a792, a784, ...), die sich
+# bei jedem neu angelegten Warenkorb ändern. Wir matchen deshalb auf stabile
+# Sub-String-Anteile mit CSS-Attribut-Selektoren [id*='...'], nicht auf ganze IDs.
 
-loginUrl: "https://gconlineplus.de/login"
-schnellErfassungUrl: "https://gconlineplus.de/schnellerfassung"
+loginUrl: "https://gconlineplus.de"
+cartListUrl: "https://gconlineplus.de/carts"
 
+# --- Verifikation: nach Login sichtbar ---
 selectors:
-  # TODO: einmal manuell im Browser durchklicken und die echten Selektoren
-  # einsetzen. Bis dahin ist /bestellung abgeschaltet und gibt 501 zurueck.
-  usernameInput: "input[name='username']"
-  passwordInput: "input[name='password']"
-  loginButton: "button[type='submit']"
-  artikelInput: "input[name='artikelnummer']"
-  mengeInput: "input[name='menge']"
-  hinzufuegenButton: "button.add-to-cart"
-  warenkorbButton: "a.cart-link"
-  abschickenButton: "button.submit-order"
-  bestellnummerSelector: ".order-confirmation-number"
+  # A3-Commerce-Login-Formular (oben links im Header, kein 2FA)
+  usernameInput:  "#a3_inputName"
+  passwordInput:  "#a3_inputPass"
+  loginButton:    "#a3_btnSubmit"
+  loggedInSelector: "#menuHeader > li > span > div"
+
+  # --- Neuer Warenkorb (Sidebar "Warenkörbe" -> "Warenkorb hinzufügen") ---
+  # Text-Locator in server.js: "Warenkörbe" in der linken Navigation
+  # "Warenkorb hinzufügen" oeffnet einen Dialog mit:
+  #   Auftragsnummer (text input)
+  #   Auftragstext   (text input)
+  #   Standardansicht (dropdown, default lassen)
+  # Buttons: "Abbrechen" / "Hinzufügen"
+  # Nach "Hinzufügen" wird auf die Cart-Position-Seite weitergeleitet.
+  newCartAuftragsnummerInput: "[id*='addCart_customerNumber']"
+  newCartAuftragstextInput:    "[id*='addCart_customerText']"
+  newCartHinzufuegenButton:    "[id*='addCart_'][id$='_submit']"
+
+  # --- Bestaetigungs-Dialoge (mehrfach verwendet) ---
+  confirmGeduld: "#messageBoxButtonYes"
+  confirmErfolg: "#messageBoxButtonOk"
+
+  # --- Pro Position: Artikel hinzufuegen (Cart-Position-Seite, a792-Pattern) ---
+  # Das "a792" im Original-Selector wechselt pro Warenkorb.
+  # Wir matchen auf stabile Sub-String-Anteile, das funktioniert fuer jeden Cart.
+  artikelHinzufuegenButton: "[id*='navbar_btnArtikelAdd'] > span > span.ui-btn-text"
+  artikelNummerInput:        "[id*='formProductAdd'][id*='productNumber']"
+  artikelMengeInput:          "[id*='formProductAdd'][id*='productCount']"
+  artikelHinzufuegenSubmit:   "[id*='formProductAdd'] > div.ui-block.ui-block-c.ui-last-block > div"
+
+  # --- Hamburger-Menue in der Cart-Position-Seite ---
+  hamburgerTrigger: "[id*='wizardContainer_buttonGrid_btnMenu'] > span > span.ui-icon.ui-icon-svgMenue.ui-icon-shadow"
+
+  # --- "Weiterleiten"-Flow ---
+  # 1) Klick auf Hamburger-Trigger (oben)
+  # 2) Im Menue auf "Weiterleiten" klicken (Text-Locator in server.js)
+  # 3) Dialog "Auswahl Empfänger" erscheint, Textfeld fuer Name
+  # 4) OK-Button: der Submit im PromptBox-Form
+  # Der genaue Selector fuer das Empfänger-Textfeld ist TODO (s.u.)
+  weiterleitenItem: ""                     # wird per Text-Locator "Weiterleiten" gefunden
+  empfaengerInput:  ""                     # TODO: z. B. "#PromptBox_form_empfaengerName"
+  weiterleitenSubmit: "#PromptBox_form_btnGrid_submit"
+
+# ======================================================================
+# aktionen: Self-Healing-Engine (server.js -> lib/smart.js)
+# ----------------------------------------------------------------------
+# Pro Aktion eine LISTE von Kandidaten-Strategien, die der Reihe nach
+# probiert werden. Praefixe:
+#   text=…        -> sichtbarer Text (Teilstring)
+#   exacttext=…   -> exakter Text
+#   role=rolle|Name -> ARIA-Rolle + Name  (z. B. role=button|Weiterleiten)
+#   placeholder=… / label=…
+#   css=…  oder ohne Praefix -> CSS-Selektor
+# 'ziel'          : Klartext-Beschreibung fuer den KI-Fallback.
+# 'erwarteDanach' : Selektor, der nach der Aktion sichtbar sein MUSS
+#                   (Verifikation). Fehlt er, gilt die Aktion als ok.
+# 'icon: true'    : reines Icon ohne Text -> ueberspringt KI-DOM, geht
+#                   direkt zu KI-Vision.
+# Von der KI gelernte Selektoren landen in data/gc.learned.json und werden
+# VOR diesen Kandidaten probiert (Selbstheilung).
+# ======================================================================
+aktionen:
+  warenkoerbeOeffnen:
+    ziel: "Navigationspunkt 'Warenkörbe' (linkes Menü oder oben rechts das Warenkörbe-Icon), der die Warenkorb-Liste öffnet"
+    kandidaten:
+      - "text=Warenkörbe"
+      - "role=link|Warenkörbe"
+      - "css=a[href*='cart' i]"
+    # Keine eigene Verifikation dieses Navigations-Schritts: die Liste oeffnet
+    # sich zuverlaessig (Screenshots belegen das), aber Text-Checks matchten hier
+    # in GCs SPA nicht sauber. Die eigentliche Probe ist der naechste Schritt
+    # (findet der Bot das +-Icon?). Deshalb erwarteDanach leer.
+    erwarteDanach: ""
+
+  warenkorbHinzufuegen:
+    ziel: "Icon-Button (Plus-Symbol) oben im Warenkörbe-Panel, der einen neuen Warenkorb anlegt"
+    kandidaten:
+      # Das sichtbare Icon-Span klicken (der ID-Wrapper selbst gilt Playwright als unsichtbar).
+      - "css=[id*='buttonAddCart'] .ui-icon-svgAdd"
+      - "css=[id*='buttonAddCart'] span.ui-icon"
+      - "css=[id*='buttonAddCart']"
+      - "text=Warenkorb hinzufügen"
+    erwarteDanach: "[id*='addCart_customerNumber']"
+
+  auftragsnummer:
+    ziel: "Eingabefeld 'Auftragsnummer' im Dialog fuer den neuen Warenkorb"
+    kandidaten:
+      - "css=#PageOnlinePlusCartAdd_addCart_customerNumber"
+      - "css=[id*='addCart_customerNumber']"
+
+  auftragstext:
+    ziel: "Eingabefeld 'Auftragstext'/'Projektbezeichnung' im Dialog fuer den neuen Warenkorb"
+    kandidaten:
+      - "css=#PageOnlinePlusCartAdd_addCart_customerText"
+      - "css=[id*='addCart_customerText']"
+
+  warenkorbDialogHinzufuegen:
+    ziel: "Roter Button 'Hinzufügen' unten im Dialog 'Warenkorb hinzufügen', der den neuen Warenkorb anlegt (NICHT der Dialog-Titel)"
+    kandidaten:
+      # exacttext, damit NICHT der Titel "Warenkorb hinzufügen" (Teilstring) getroffen wird
+      - "exacttext=Hinzufügen"
+      - "css=[id*='addCart_'][id$='_submit']"
+      - "role=button|Hinzufügen"
+    # Nach dem Anlegen kommt die Warenkorb-LISTE zurueck (nicht die Position-Seite).
+    # Deshalb hier nicht auf navbar_btnArtikelAdd pruefen. Der naechste Schritt
+    # (neuen Warenkorb oeffnen) ist die eigentliche Probe.
+    erwarteDanach: ""
+
+  artikelAdd:
+    ziel: "Button 'Artikel hinzufügen' in der Warenkorb-Position-Ansicht"
+    kandidaten:
+      - "css=[id*='navbar_btnArtikelAdd'] > span > span.ui-btn-text"
+      - "css=[id*='navbar_btnArtikelAdd']"
+      - "text=Artikel hinzufügen"
+    erwarteDanach: "[id*='formProductAdd'][id*='productNumber']"
+
+  artikelNummer:
+    ziel: "Eingabefeld fuer die Artikelnummer beim Hinzufuegen einer Position"
+    kandidaten:
+      - "css=[id*='formProductAdd'][id*='productNumber']"
+
+  artikelMenge:
+    ziel: "Eingabefeld fuer die Menge beim Hinzufuegen einer Position"
+    kandidaten:
+      - "css=[id*='formProductAdd'][id*='productCount']"
+
+  artikelSubmit:
+    ziel: "Button/Element, das die eingegebene Position dem Warenkorb hinzufuegt"
+    kandidaten:
+      - "css=[id*='formProductAdd'] > div.ui-block.ui-block-c.ui-last-block > div"
+      - "text=Position hinzufügen"
+
+  hamburger:
+    ziel: "Das Hamburger-/Menue-Icon oben in der Warenkorb-Position-Ansicht, das das Menue mit 'Weiterleiten' oeffnet"
+    icon: true
+    kandidaten:
+      - "css=[id*='wizardContainer_buttonGrid_btnMenu'] > span > span.ui-icon.ui-icon-svgMenue.ui-icon-shadow"
+      - "css=[id*='wizardContainer_buttonGrid_btnMenu']"
+    erwarteDanach: "text=Weiterleiten"
+
+  weiterleitenItem:
+    ziel: "Menuepunkt 'Weiterleiten' im geoeffneten Hamburger-Menue"
+    kandidaten:
+      - "text=Weiterleiten"
+      - "role=menuitem|Weiterleiten"
+    erwarteDanach: "#PromptBox_form"
+
+  empfaenger:
+    ziel: "Textfeld fuer den Empfaenger-Namen im 'Auswahl Empfänger'-Dialog"
+    kandidaten:
+      - "css=#PromptBox_form input[type='text']"
+      - "css=#PromptBox_form input:not([type])"
+
+  weiterleitenSubmit:
+    ziel: "OK-/Bestaetigen-Button im Empfaenger-Dialog, der den Warenkorb weiterleitet"
+    kandidaten:
+      - "css=#PromptBox_form_btnGrid_submit"
+      - "role=button|OK"
+      - "text=OK"

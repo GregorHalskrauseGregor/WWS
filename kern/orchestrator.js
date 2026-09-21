@@ -1,11 +1,16 @@
-// Orchestrator — der komplette Ablauf einer Nachricht, ohne jeden Telegram-Bezug.
+// Orchestrator -- der komplette Ablauf einer Nachricht, ohne jeden Telegram-Bezug.
 //
-// Vorher lag das in bot.js zwischen Transport, Commands und Experten-Sonderfällen.
+// Vorher lag das in bot.js zwischen Transport, Commands und Experten-Sonderfaellen.
 // Diese Datei kennt kein Telegram, keine Inline-Buttons und keinen einzigen
 // Experten namentlich. Sie liefert ein neutrales Ergebnis, das ein Adapter
 // rendert:
 //
 //   { text, dateien: [pfade], knoepfe: [{text, daten}] }
+//
+// Multi-Command: Eine Nachricht kann N Befehle enthalten, die dann als
+// Workflow (kern/workflow.js) sequenziell abgearbeitet werden. Folge-Nachrichten
+// des Users werden automatisch dem Sub-Vorgang zugeordnet, der gerade auf
+// Rueckmeldung wartet.
 
 const fs = require('fs');
 const path = require('path');
@@ -21,21 +26,18 @@ const experten = require('../experten');
 
 const router = require('./router');
 const wissensbasis = require('../lib/wissen');
-
-// Der Hinweis aufs Aufraeumen kommt hoechstens einmal je Chat und Laufzeit.
-// Ein Bot, der bei jeder Buchung ans Aufraeumen erinnert, wird ignoriert — und
-// dann auch der Hinweis, der wirklich wichtig ist.
-const _korbHinweisGegeben = new Set();
-
 const vorgangSpeicher = require('./vorgang');
 const vorgangsmotor = require('./vorgangsmotor');
 const werkzeuge = require('./werkzeuge');
 const toolloop = require('./toolloop');
+const workflow = require('./workflow');
+
+// Der Hinweis aufs Aufraeumen kommt hoechstens einmal je Chat und Laufzeit.
+const _korbHinweisGegeben = new Set();
 
 // ────────────────────────────────────────────────────────────────── Helfer
 
-// [MERKE: ...]-Zeilen aus der KI-Antwort schneiden. Die Entscheidung, sich
-// etwas zu merken, trifft die KI; das Herausschneiden und Speichern ist Code.
+// [MERKE: ...]-Zeilen aus der KI-Antwort schneiden.
 function trenneMerkeHooks(antwort) {
   if (!antwort) return { sichtbar: '', fakt: null };
   const merken = [];
@@ -53,7 +55,6 @@ function sichererDateiname(name, fallback) {
   return basis.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || fallback;
 }
 
-// Legt eine hochgeladene Datei im passenden Ordner ab (Router-Entscheidung).
 function legeDateiAb(chatId, datei, aktion) {
   const ziele = {
     vorlage_speichern: { ordner: PFADE.VORLAGEN, was: 'Vorlage', wo: 'data/aufnahme_vorlage/' },
@@ -65,10 +66,9 @@ function legeDateiAb(chatId, datei, aktion) {
   fs.mkdirSync(ziel.ordner, { recursive: true });
   const name = sichererDateiname(datei.name, `datei-${Date.now()}`);
   fs.writeFileSync(path.join(ziel.ordner, name), datei.buffer);
-  return { text: `✅ ${ziel.was} gespeichert als \`${name}\` unter \`${ziel.wo}\`.` };
+  return { text: `OK ${ziel.was} gespeichert als \`${name}\` unter \`${ziel.wo}\`.` };
 }
 
-// Komprimierung läuft im Hintergrund, damit der Nutzer nicht wartet.
 function komprimiereSpaeter(chatId, themaId, dienste) {
   (async () => {
     const t = themen.ladeThema(chatId, themaId);
@@ -81,41 +81,30 @@ function komprimiereSpaeter(chatId, themaId, dienste) {
   })().catch((err) => dienste.protokoll?.('Fehler', `Komprimierung (${themaId}): ${err.message}`));
 }
 
-// ─────────────────────────────────────────────────────────────── Hauptablauf
+// ──────────────────────────────────────────────────────── Kern: ein Befehl
+//
+// Verarbeitet einen einzelnen Befehl. Wird sowohl vom Single-Command-Pfad
+// (verarbeiteNachricht) als auch von den Workflow-Sub-Vorgaengen
+// (verarbeiteWorkflowFolge, starteWorkflowAusRouting) aufgerufen.
 
-async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = null, datei = null }, dienste) {
-  // 0) Limit vor allem anderen — kein KI-Aufruf, wenn der Nutzer drüber ist.
-  const limit = ratelimit.pruefeNachricht(chatId);
-  if (!limit.ok) {
-    dienste.protokoll?.('Sicherheit', `Rate-Limit blockt ${chatId}: ${limit.grund}`);
-    return { text: '⛔ ' + limit.grund };
-  }
-  ratelimit.zaehleNachricht(chatId);
-
-  // 1) EINE Entscheidung: welcher Faden, welche Aktion, welcher Experte.
-  const routing = await router.entscheide({
-    text, dokInfo, chatId, chat: dienste.routerChat, protokoll: dienste.protokoll
-  });
+async function verarbeiteBefehl(routing, params, dienste) {
+  const { chatId, text, dokInhalt, dokInfo, datei } = params;
   dienste.protokoll?.('Router',
     `thema=${routing.thema.id || 'neu'} aktion=${routing.aktion} ` +
     `experte=${routing.experte || '-'} confidence=${routing.confidence.toFixed(2)}` +
     (routing.hinweis ? ` (${routing.hinweis})` : ''));
 
-  // 2) Faden auflösen — genau hier entstehen parallele Gesprächsfäden.
   let thema = routing.thema.id ? themen.ladeThema(chatId, routing.thema.id) : null;
   if (!thema) {
     thema = themen.erstelleThema(chatId, routing.thema.name || router.leiteThemaNamenAb(text));
   }
 
-  // Auch kurze Zwischenschritte kommen in den Verlauf. Sonst fehlt dem Router
-  // beim naechsten Mal genau die Rueckfrage, auf die der Nutzer gerade antwortet.
   const beende = (antwort) => {
     themen.haengeNachrichtAn(chatId, thema.id, 'user', text || '(Datei)');
     themen.haengeNachrichtAn(chatId, thema.id, 'assistant', antwort);
     return { text: antwort, themaId: thema.id };
   };
 
-  // 3) Reine Datei-Ablage
   if (['vorlage_speichern', 'style_speichern', 'dokument_speichern'].includes(routing.aktion)) {
     if (datei && datei.buffer) {
       const abgelegt = legeDateiAb(chatId, datei, routing.aktion);
@@ -124,7 +113,6 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
     return beende(routing.hinweis || 'Schick mir die Datei dazu, dann lege ich sie ab.');
   }
 
-  // 4) Rückfrage
   if (routing.aktion === 'nachfragen') {
     return beende(routing.hinweis || 'Kannst du mir dazu noch etwas mehr Kontext geben?');
   }
@@ -133,7 +121,6 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
     ? experten.findeExperteMitId(routing.experte)
     : null;
 
-  // 5) Datei-Hook des Experten (z.B. Unterschrift-Foto ablegen)
   if (experte && datei && datei.buffer && typeof experte.onDatei === 'function') {
     const hook = await experte.onDatei({
       chatId, themaId: thema.id, buffer: datei.buffer,
@@ -145,8 +132,6 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
 
   if (experte) dienste.protokoll?.('Experte', `Aktiv: ${experte.id} (${chatId}/${thema.id})`);
 
-  // 6) Wissen bereitstellen. Normalfall: die Karten, die der Router gewaehlt hat.
-  // Nach /addAllK einmalig alles — und das Flag ist danach verbraucht.
   const alleGefordert = wissensbasis.brauchtAlles(chatId);
   const wissensText = alleGefordert ? wissensbasis.alles() : wissensbasis.text(routing.wissen);
   if (wissensText) {
@@ -155,29 +140,28 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
       : `Karten: ${routing.wissen.join(', ')} (${wissensText.length} Zeichen)`);
   }
 
-  // 7) Ausführen — je nach Bauart des Experten
   const bauart = experten.art(experte);
   let ergebnis;
 
   if (bauart === 'Vorgang') {
-    // Deklarativer Experte: der Motor sammelt, fragt nach und führt aus.
     ergebnis = await vorgangsmotor.verarbeite(
       { experte, chatId, themaId: thema.id, text, dokInhalt, wissensText }, dienste);
   } else if (bauart === 'frei') {
-    // Experte mit eigener Logik.
     try {
+      // dokInfo und datei MUESSEN mit: ohne sie sieht ein freier Experte nur
+      // den ausgelesenen Text, nie den Dateinamen und nie den Puffer. Der
+      // Projektordner konnte dadurch keine Originaldatei ablegen — und damit
+      // spaeter auch keine zurueckgeben.
       ergebnis = await experte.verarbeite(
-        { chatId, themaId: thema.id, text, dokInhalt, thema, wissensText }, dienste);
+        { chatId, themaId: thema.id, text, dokInhalt, dokInfo, datei, thema, wissensText }, dienste);
     } catch (err) {
-      dienste.protokoll?.('Fehler', `Experte ${experte.id} abgestürzt: ${err.message}`);
+      dienste.protokoll?.('Fehler', `Experte ${experte.id} abgestuerzt: ${err.message}`);
       ergebnis = { text: `Fehler im Modul ${experte.name}: ${err.message}` };
     }
   } else {
-    // Prompt-Experte oder normaler Chat: Standard-Flow mit Tool-Loop.
     ergebnis = await standardAntwort({ chatId, thema, text, dokInhalt, experte, wissensText }, dienste);
   }
 
-  // 8) Nachbereitung: Gedächtnis, Filter, Persistenz
   const { sichtbar, fakt } = trenneMerkeHooks(ergebnis.text || '');
   let hinweis = '';
   if (fakt && gedaechtnis.fuegeHinzu(chatId, fakt)) hinweis = `\n\n_gemerkt: ${fakt}_`;
@@ -187,17 +171,13 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
     dienste.protokoll?.('Sicherheit',
       `Output-Filter entfernte ${gefiltert.gefiltert.length} Stelle(n) (${chatId}): ${gefiltert.gefiltert.join(', ')}`);
   }
-  // Der Eingangskorb faehrt bei jeder fachlichen Nachricht komplett mit. Solange
-  // er klein ist, kostet das kaum etwas — ab einer gewissen Groesse lohnt sich
-  // das Einordnen, weil aufgeraeumtes Wissen nur noch dann geladen wird, wenn
-  // der Router es braucht.
   let korbHinweis = '';
   if (wissensText && !_korbHinweisGegeben.has(String(chatId))) {
     const korb = wissensbasis.korbVoll();
     if (korb.zuVoll) {
       _korbHinweisGegeben.add(String(chatId));
       korbHinweis = `\n\n_In der Wissensbank warten ${korb.anzahl} Notizen aufs Einordnen. ` +
-        'Sie fahren derzeit bei jeder Materialnachricht ungefiltert mit — /addKnowledge räumt auf._';
+        'Sie fahren derzeit bei jeder Materialnachricht ungefiltert mit -- /addKnowledge raeumt auf._';
     }
   }
 
@@ -212,7 +192,12 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
     text: endText,
     dateien: ergebnis.dateien || [],
     knoepfe: ergebnis.knoepfe || [],
-    themaId: thema.id
+    themaId: thema.id,
+    // Workflow-Hooks: der Vorgangsmotor setzt diese Flags damit der Orchestrator
+    // weiss, ob der Sub-Vorgang auf Eingabe wartet oder abgeschlossen ist.
+    wartetAufEingabe: ergebnis.wartetAufEingabe === true || ergebnis.vorgangEnde === false,
+    vorgangVollstaendig: ergebnis.vorgangVollstaendig === true || ergebnis.vorgangEnde === true,
+    experteId: experte ? experte.id : null
   };
 }
 
@@ -232,12 +217,146 @@ async function standardAntwort({ chatId, thema, text, dokInhalt, experte, wissen
   return { text: antwort };
 }
 
-// Bestätigen-Knopf eines Vorgangs (kommt vom Adapter zurück).
+// ─────────────────────────────────────────────────────────────── Workflows
+
+// Folge-Nachricht fuer einen offenen Workflow-Sub-Vorgang.
+// Der Bot hat beim letzten Schritt eine Rueckfrage gestellt -- diese Nachricht
+// ist die Antwort. Der Router wird bewusst umgangen, weil die Antwort
+// semantisch zum Sub-Vorgang gehoert, nicht zur freien Erkennung.
+async function verarbeiteWorkflowFolge(aktiverSub, params, dienste) {
+  const { workflow: wf, befehl } = aktiverSub;
+  const { chatId } = params;
+  dienste.protokoll?.('Workflow',
+    `Folge fuer ${wf.id}/${befehl.experteId} (Befehl ${befehl.index + 1}/${wf.befehle.length})`);
+
+  const routing = {
+    thema: { id: befehl.themaId, neu: false, name: null },
+    aktion: 'verarbeiten',
+    experte: befehl.experteId,
+    dokTyp: befehl.dokTyp,
+    hinweis: null,
+    confidence: 1,
+    wissen: [],
+    weitere_befehle: []
+  };
+
+  const ergebnis = await verarbeiteBefehl(routing, params, dienste);
+
+  if (ergebnis.wartetAufEingabe) {
+    workflow.setzeWartetAufEingabe(chatId, wf.id, befehl.index);
+    return { text: ergebnis.text, dateien: ergebnis.dateien, knoepfe: ergebnis.knoepfe };
+  }
+
+  const naechster = workflow.naechsterBefehl(chatId, wf.id);
+  if (!naechster) {
+    dienste.protokoll?.('Workflow', wf.id + ': alle Befehle abgeschlossen');
+    return {
+      text: `Befehl ${befehl.index + 1}/${wf.befehle.length} abgeschlossen.\n\n` +
+            `Workflow abgeschlossen (${wf.befehle.length} Aufgaben erledigt).`,
+      dateien: ergebnis.dateien,
+      knoepfe: ergebnis.knoepfe
+    };
+  }
+  dienste.protokoll?.('Workflow',
+    `${wf.id}: Befehl ${befehl.index + 1} abgeschlossen, weiter mit ` +
+    `${naechster.experteId} (${naechster.index + 1}/${wf.befehle.length})`);
+  return {
+    text: `Befehl ${befehl.index + 1}/${wf.befehle.length} abgeschlossen.\n\n` +
+          ergebnis.text +
+          `\n\nNaechster Schritt: ${naechster.experteId} (${naechster.index + 1}/${wf.befehle.length}) ` +
+          `-- schick einfach deine Antwort.`,
+    dateien: ergebnis.dateien,
+    knoepfe: ergebnis.knoepfe
+  };
+}
+
+// Startet einen Workflow aus einem Multi-Intent-Routing. Der erste Befehl wird
+// direkt verarbeitet, die anderen warten auf "ihren" Schritt.
+async function starteWorkflowAusRouting(routing, params, dienste) {
+  const { chatId, text } = params;
+  const alleBefehle = [routing, ...routing.weitere_befehle];
+  dienste.protokoll?.('Workflow',
+    `Starte Workflow mit ${alleBefehle.length} Befehlen: ` +
+    alleBefehle.map((b) => b.experte || b.aktion).join(', '));
+
+  const befehleFuerSpeicher = alleBefehle.map((b) => ({
+    experteId: b.experte,
+    hinweis: b.hinweis,
+    dokTyp: b.dok_typ
+  }));
+  const wf = workflow.start(chatId, text, befehleFuerSpeicher);
+  dienste.protokoll?.('Workflow', `Workflow ${wf.id} gestartet`);
+
+  const ergebnis = await verarbeiteBefehl(routing, params, dienste);
+
+  if (ergebnis.wartetAufEingabe) {
+    workflow.setzeWartetAufEingabe(chatId, wf.id, 0);
+    return { text: ergebnis.text, dateien: ergebnis.dateien, knoepfe: ergebnis.knoepfe };
+  }
+  const naechster = workflow.naechsterBefehl(chatId, wf.id);
+  if (!naechster) {
+    return {
+      text: `Workflow abgeschlossen (${wf.befehle.length} Aufgaben erledigt).\n\n` + ergebnis.text,
+      dateien: ergebnis.dateien,
+      knoepfe: ergebnis.knoepfe
+    };
+  }
+  return {
+    text: `Befehl 1/${wf.befehle.length} abgeschlossen.\n\n` +
+          ergebnis.text +
+          `\n\nNaechster Schritt: ${naechster.experteId} (2/${wf.befehle.length}) ` +
+          `-- schick einfach deine Antwort.`,
+    dateien: ergebnis.dateien,
+    knoepfe: ergebnis.knoepfe
+  };
+}
+
+// ──────────────────────────────────────────────────────────── Hauptablauf
+
+async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = null, datei = null }, dienste) {
+  // 0) Limit vor allem anderen.
+  const limit = ratelimit.pruefeNachricht(chatId);
+  if (!limit.ok) {
+    dienste.protokoll?.('Sicherheit', `Rate-Limit blockt ${chatId}: ${limit.grund}`);
+    return { text: 'STOP ' + limit.grund };
+  }
+  ratelimit.zaehleNachricht(chatId);
+
+  // 1) WORKFLOW-FOLGE: gibt es einen Sub-Vorgang der auf User-Eingabe wartet?
+  // Wenn ja, geht die Nachricht direkt dorthin -- der Router wird uebersprungen.
+  const aktiverSub = workflow.aktiverBefehl(chatId);
+  if (aktiverSub) {
+    return await verarbeiteWorkflowFolge(aktiverSub,
+      { chatId, text, dokInhalt, dokInfo, datei }, dienste);
+  }
+
+  // 2) Router: ein oder mehrere Befehle erkennen.
+  const routing = await router.entscheide({
+    text, dokInfo, chatId, chat: dienste.routerChat, protokoll: dienste.protokoll
+  });
+  dienste.protokoll?.('Router',
+    `thema=${routing.thema.id || 'neu'} aktion=${routing.aktion} ` +
+    `experte=${routing.experte || '-'} confidence=${routing.confidence.toFixed(2)}` +
+    (routing.hinweis ? ` (${routing.hinweis})` : '') +
+    (routing.weitere_befehle?.length ? ` +${routing.weitere_befehle.length} Folge-Befehle` : ''));
+
+  // 3) WORKFLOW-START: Multi-Intent erkannt -> Workflow anlegen und ersten
+  // Sub-Vorgang direkt verarbeiten.
+  if (routing.weitere_befehle && routing.weitere_befehle.length > 0) {
+    return await starteWorkflowAusRouting(routing,
+      { chatId, text, dokInhalt, dokInfo, datei }, dienste);
+  }
+
+  // 4) SINGLE-COMMAND (alter Pfad, ueber verarbeiteBefehl).
+  return await verarbeiteBefehl(routing, { chatId, text, dokInhalt, dokInfo, datei }, dienste);
+}
+
+// Bestätigen-Knopf eines Vorgangs.
 async function bestaetigeVorgang({ chatId, themaId }, dienste) {
   const vorgang = vorgangSpeicher.lade(chatId, themaId);
   if (!vorgang) return { text: 'Dieser Vorgang existiert nicht mehr.' };
   const experte = experten.findeExperteMitId(vorgang.experteId);
-  if (!experte) return { text: 'Der zuständige Experte ist nicht mehr verfügbar.' };
+  if (!experte) return { text: 'Der zustaendige Experte ist nicht mehr verfuegbar.' };
   return vorgangsmotor.bestaetigeUeberKnopf({ experte, chatId, themaId }, dienste);
 }
 

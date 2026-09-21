@@ -8,7 +8,9 @@
 
 const fs = require('fs');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
 const path = require('path');
+const antwortZiel = new AsyncLocalStorage();
 const TelegramBot = require('node-telegram-bot-api');
 
 const { SCHWELLEN, PFADE } = require('../config');
@@ -22,6 +24,8 @@ const themen = require('../themen');
 const gedaechtnis = require('../gedaechtnis');
 const kompressor = require('../kompressor');
 const benutzer = require('../benutzer');
+const zugang = require('../zugang');
+const gruppen = require('../gruppen');
 const ratelimit = require('../ratelimit');
 const { schreibeEintrag, leseLetzte } = require('../protokoll');
 const fachdienste = require('../dienste');
@@ -33,15 +37,37 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
 
   // ───────────────────────────────────────────────────────────── Ausgabe
 
+  // ─────────────────────────────────────────── Antwort-Ziel in Forum-Gruppen
+  //
+  // In einer Forum-Gruppe landet eine Antwort OHNE message_thread_id im Thema
+  // "Allgemein" — nicht dort, wo gefragt wurde. Das würde die ausgelagerten
+  // Fäden wertlos machen. Der Thread wird deshalb für die Dauer einer Nachricht
+  // mitgeführt, und zwar über AsyncLocalStorage statt über einen Eintrag pro
+  // Chat: zwei Themen derselben Gruppe können gleichzeitig hereinkommen, ein
+  // gemeinsamer Eintrag würde die Antworten dann vertauschen.
+  function threadVon(msg) {
+    return (msg && msg.is_topic_message && msg.message_thread_id) ? msg.message_thread_id : null;
+  }
+
+  function imThema(msg, fn) {
+    const t = threadVon(msg);
+    return t ? antwortZiel.run({ threadId: t }, fn) : fn();
+  }
+
+  function zielOpt() {
+    const s = antwortZiel.getStore();
+    return s && s.threadId ? { message_thread_id: s.threadId } : {};
+  }
+
   async function sendeText(chatId, text) {
     if (!text) return;
     for (const block of teile(text)) {
       try {
-        await bot.sendMessage(chatId, block, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, block, { parse_mode: 'Markdown', ...zielOpt() });
       } catch {
         // Markdown kann an Nutzerdaten scheitern (einzelne * oder _).
         // Dann lieber unformatiert senden als gar nicht.
-        await bot.sendMessage(chatId, block).catch(() => {});
+        await bot.sendMessage(chatId, block, { ...zielOpt() }).catch(() => {});
       }
     }
   }
@@ -67,16 +93,16 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     if (knoepfe.length > 0) {
       const markup = { inline_keyboard: [knoepfe.map((k) => ({ text: k.text, callback_data: k.daten }))] };
       try {
-        await bot.sendMessage(chatId, ergebnis.text, { parse_mode: 'Markdown', reply_markup: markup });
+        await bot.sendMessage(chatId, ergebnis.text, { parse_mode: 'Markdown', reply_markup: markup, ...zielOpt() });
       } catch {
-        await bot.sendMessage(chatId, ergebnis.text, { reply_markup: markup }).catch(() => {});
+        await bot.sendMessage(chatId, ergebnis.text, { reply_markup: markup, ...zielOpt() }).catch(() => {});
       }
     } else {
       await sendeText(chatId, ergebnis.text);
     }
     for (const datei of ergebnis.dateien || []) {
       try {
-        if (fs.existsSync(datei)) await bot.sendDocument(chatId, datei);
+        if (fs.existsSync(datei)) await bot.sendDocument(chatId, datei, { ...zielOpt() });
       } catch (err) {
         await sendeText(chatId, `Konnte die Datei nicht senden: ${err.message}`);
       }
@@ -84,7 +110,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   }
 
   async function mitTippt(chatId, fn) {
-    bot.sendChatAction(chatId, 'typing').catch(() => {});
+    bot.sendChatAction(chatId, 'typing', { ...zielOpt() }).catch(() => {});
     return fn();
   }
 
@@ -117,13 +143,13 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
           bot.editMessageReplyMarkup({ inline_keyboard: [] },
             { chat_id: chatId, message_id: nachrichtId }).catch(() => {});
         }
-        bot.sendMessage(chatId, '⏱️ Bestätigung abgelaufen, Aufruf abgebrochen.').catch(() => {});
+        bot.sendMessage(chatId, '⏱️ Bestätigung abgelaufen, Aufruf abgebrochen.', { ...zielOpt() }).catch(() => {});
         fertig({ erlaubt: false, grund: 'Zeitüberschreitung' });
       }, SCHWELLEN.TOOL_BESTAETIGUNG_TIMEOUT_MS);
 
       bot.sendMessage(chatId,
         `⚠️ Die KI möchte folgende externe Aktion ausführen:\n\n${beschreibe(toolCalls)}\n\nErlauben?`,
-        { reply_markup: { inline_keyboard: [[
+        { ...zielOpt(), reply_markup: { inline_keyboard: [[
           { text: '✅ Ja, abrufen', callback_data: 'tool_ok:' + id },
           { text: '❌ Nein', callback_data: 'tool_no:' + id }
         ]] } }
@@ -144,7 +170,10 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       lightChat: summaryChat, // Zusammenfassen, Gedächtnis
       protokoll: schreibeEintrag,
       melde: (text) => sendeText(chatId, text),
-      frageBestaetigung: frageBestaetigung(chatId)
+      frageBestaetigung: frageBestaetigung(chatId),
+      // Wohin eine SPAETERE Antwort gehoert (Forum-Thema). Experten, die einen
+      // Auftrag einstellen und erst Minuten danach melden, speichern das mit.
+      antwortZiel: () => zielOpt()
     };
   }
 
@@ -171,10 +200,12 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   // Befehle noch Text. Registriert wird deshalb ueber diesen Wrapper und nicht
   // direkt ueber bot.onText: sonst haette jeder neue Befehl die Sperre vergessen.
   function befehl(muster, handler) {
-    bot.onText(muster, async (msg, m) => {
+    bot.onText(muster, (msg, m) => imThema(msg, async () => {
+      // Zugang zuerst: ohne Freischaltung geht KEIN Befehl durch.
+      if (await gateFaengtAb(msg)) return;
       if (await modusFaengtAb(msg)) return;
       return handler(msg, m);
-    });
+    }));
   }
 
   // Telegram ruft fuer eine Befehlsnachricht ZWEI Wege auf: bot.on('message')
@@ -187,6 +218,39 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     schonBehandelt.add(id);
     if (schonBehandelt.size > 500) schonBehandelt.delete(schonBehandelt.values().next().value);
     return false;
+  }
+
+  // ─────────────────────────────────────────────────────────── Zugangs-Gate
+  //
+  // Laeuft VOR allem anderen und ist vollstaendig deterministisch: kein Router,
+  // keine KI, kein Experte. Wer nicht freigeschaltet ist, sieht ausschliesslich
+  // die Aufforderung, den Code einzugeben — so lange, bis er stimmt.
+  async function gateFaengtAb(msg) {
+    const chatId = msg.chat.id;
+    if (zugang.istFreigeschaltet(chatId)) return false;
+
+    const from = msg.from || {};
+    const r = zugang.pruefe(chatId, msg.text || '', {
+      displayName: [from.first_name, from.last_name].filter(Boolean).join(' ') || from.username || null,
+      username: from.username || null
+    });
+    if (r.durchlassen) return false;
+
+    // Telegram ruft fuer eine Befehlsnachricht message UND onText auf — ohne
+    // dieses Gedaechtnis kaeme die Code-Aufforderung doppelt.
+    if (merkeBehandelt(msg)) return true;
+    await sendeText(chatId, r.text);
+    if (r.neu) schreibeEintrag('Zugang', `Freigeschaltet: ${chatId} (${from.username || from.first_name || '?'})`);
+    return true;
+  }
+
+  // Nachrichten aus einer Gruppe bekommen eine kurze Kontextzeile vorangestellt:
+  // in welcher Gruppe, welchem Forum-Thema und worum es dort bisher ging. Der
+  // Router und die Experten lesen das mit, ohne dass sie Telegram kennen muessen.
+  function mitGruppenKontext(msg, text) {
+    const k = gruppen.kontextZeile(msg);
+    if (!k) return text;
+    return text ? `${k}\n${text}` : k;
   }
 
   // Gibt true zurueck, wenn die Nachricht vom laufenden Modus erledigt wurde.
@@ -219,17 +283,21 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   // Bot, wo sie liegen — statt sie stillschweigend zu ignorieren oder sie jedem
   // anzubieten.
   function adminBefehl(muster, handler) {
-    bot.onText(muster, async (msg, m) => {
+    bot.onText(muster, (msg, m) => imThema(msg, async () => {
       const aktiv = modus.aktiv(msg.chat.id);
       if (aktiv && aktiv.art === 'options' && aktiv.daten.admin) return handler(msg, m);
       if (await modusFaengtAb(msg)) return;
       await sendeText(msg.chat.id,
         '🔒 Das ist ein Wartungsbefehl.\n\nÖffne dafür den Admin-Bereich:\n`/einstellungen <Kennwort>`');
-    });
+    }));
   }
 
-  bot.on('message', async (msg) => {
+  bot.on('message', (msg) => imThema(msg, async () => {
     const chatId = msg.chat.id;
+
+    // Zugang VOR allem anderen — auch vor dem Anlegen von Nutzerdaten. Fuer
+    // einen gesperrten Chat entsteht so kein einziger Ordner.
+    if (await gateFaengtAb(msg)) return;
 
     let userState;
     try {
@@ -251,7 +319,8 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     // Text
     if (msg.text) {
       if (msg.text.trim().startsWith('/')) return; // Commands laufen über onText
-      return mitTippt(chatId, () => verarbeite(chatId, { text: msg.text.trim() }));
+      const text = mitGruppenKontext(msg, msg.text.trim());
+      return mitTippt(chatId, () => verarbeite(chatId, { text }));
     }
 
     // Sprachnachricht: IMMER erst transkribieren, dann normal weiter.
@@ -262,7 +331,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
           await sendeText(chatId, '🎙 Sprachnachricht wird transkribiert …');
           const text = await fachdienste.transkription(await ladeDatei(quelle.file_id), quelle.mime_type || 'audio/ogg');
           await sendeText(chatId, `Verstanden: „${text}"`);
-          await verarbeite(chatId, { text });
+          await verarbeite(chatId, { text: mitGruppenKontext(msg, text) });
         });
       } catch (err) {
         schreibeEintrag('Fehler', `Sprachnachricht: ${err.message}`);
@@ -287,7 +356,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
             schreibeEintrag('Fehler', `OCR: ${err.message}`);
           }
           await verarbeite(chatId, {
-            text: msg.caption || '',
+            text: mitGruppenKontext(msg, msg.caption || ''),
             dokInhalt: inhalt,
             dokInfo: { name, mimeType: 'image/jpeg', size: buffer.length, pfad: null },
             datei: { buffer, name, mimeType: 'image/jpeg' }
@@ -328,7 +397,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
           try { fs.writeFileSync(temp, buffer); } catch { /* Vorschau ist optional */ }
 
           await verarbeite(chatId, {
-            text: msg.caption || '',
+            text: mitGruppenKontext(msg, msg.caption || ''),
             dokInhalt: inhalt,
             dokInfo: { name, mimeType: mime, size: buffer.length, pfad: fs.existsSync(temp) ? temp : null },
             datei: { buffer, name, mimeType: mime }
@@ -340,7 +409,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
         await sendeText(chatId, 'Fehler beim Einlesen der Datei: ' + err.message);
       }
     }
-  });
+  }));
 
   async function dateiZuText(buffer, mime, name) {
     const n = String(name).toLowerCase();
@@ -380,7 +449,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
 
   // ──────────────────────────────────────────────────────────── Knopfdrücke
 
-  bot.on('callback_query', async (query) => {
+  bot.on('callback_query', (query) => imThema(query.message, async () => {
     const daten = query.data || '';
     const chatId = query.message && query.message.chat.id;
     const knoepfeWeg = () => {
@@ -415,7 +484,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     }
 
     bot.answerCallbackQuery(query.id).catch(() => {});
-  });
+  }));
 
   // ───────────────────────────────────────────────────────────────── Commands
 
@@ -571,10 +640,130 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     });
   }
 
-  // Der Lager-Bot schickt dem Monteur den Bescheid ueber DIESEN Bot — dort hat
-  // der Monteur seinen Chat, nicht im Lager-Bot.
-  benachrichtigung.registriere('hauptbot', (chatId, text) => sendeText(chatId, text));
+  // ─────────────────────────────────────────── Gruppen / Fäden auslagern
 
+  // /gruppe [Name] — legt fuer den aktuellen Faden ein eigenes Forum-Thema an.
+  // Telegram laesst Bots KEINE Gruppen erstellen; der Forum-Weg ist das, was
+  // ein Bot tatsaechlich darf. Ohne konfiguriertes Forum erklaert der Bot den
+  // manuellen Weg, statt eine Faehigkeit vorzutaeuschen, die es nicht gibt.
+  befehl(/^\/gruppe(?:\s+(.+))?\s*$/i, async (msg, m) => {
+    const chatId = msg.chat.id;
+    const gewuenscht = (m && m[1] && m[1].trim()) || null;
+    const name = gewuenscht ||
+      (themen.ladeIndex(chatId)[0] && themen.ladeIndex(chatId)[0].name) ||
+      'Neuer Faden';
+    try {
+      const r = await gruppen.erstelleForumThema(bot, name);
+      gruppen.setze(r.chatId, r.threadId, { besitzer: String(chatId), gebundenAn: name });
+      schreibeEintrag('Gruppen', `Forum-Thema "${r.titel}" angelegt fuer ${chatId}`);
+      await sendeText(chatId,
+        `✅ Eigenes Thema *${r.titel}* angelegt.\n\n` +
+        (r.link ? `Beitreten: ${r.link}\n\n` : '') +
+        'Dort schreibst du ab jetzt zu diesem Faden — ich verhalte mich genauso wie hier, ' +
+        'weiß aber immer, in welchem Thema ich gerade bin.');
+    } catch (err) {
+      await sendeText(chatId,
+        '📂 *Faden in eine Gruppe auslagern*\n\n' +
+        '⚠️ Telegram erlaubt Bots nicht, selbst Gruppen zu erstellen — das können nur Menschen. ' +
+        'Zwei Wege gibt es:\n\n' +
+        '*Weg A — automatisch (einmal einrichten):*\n' + err.message + '\n\n' +
+        '*Weg B — von Hand, sofort:*\n' +
+        '1. Gruppe in Telegram anlegen\n' +
+        '2. Diesen Bot zur Gruppe hinzufügen\n' +
+        '3. In der Gruppe `/faden_hierher ' + name + '` schreiben\n\n' +
+        'Danach ist die Gruppe dein eigener Faden.');
+    }
+  });
+
+  // In einer Gruppe: diese Gruppe (bzw. dieses Forum-Thema) als eigenen Faden
+  // registrieren. Der Bot arbeitet dort ohnehin mit eigener Themen-Ablage —
+  // das hier gibt dem Ganzen nur den Namen und den Kontext.
+  befehl(/^\/faden_hierher(?:\s+(.+))?\s*$/i, async (msg, m) => {
+    const chatId = msg.chat.id;
+    if (!gruppen.istGruppe(msg)) {
+      return sendeText(chatId, 'Das funktioniert nur *in* einer Gruppe. Schreib es dort hinein.');
+    }
+    const name = (m && m[1] && m[1].trim()) || (msg.chat && msg.chat.title) || 'Faden';
+    gruppen.merke(msg);
+    gruppen.setze(chatId, msg.message_thread_id || null, {
+      gebundenAn: name,
+      besitzer: String((msg.from && msg.from.id) || chatId)
+    });
+    schreibeEintrag('Gruppen', `Faden "${name}" gebunden an ${chatId}`);
+    await sendeText(chatId,
+      `✅ Dieser Chat ist jetzt der Faden *${name}*.\n\n` +
+      'Schreib einfach los — ich arbeite hier genauso wie im Einzelchat und weiß bei jeder ' +
+      'Nachricht, dass sie zu diesem Faden gehört.');
+  });
+
+  befehl(/^\/gruppen\b/i, async (msg) => {
+    const alle = gruppen.alle();
+    if (!alle.length) return sendeText(msg.chat.id, 'Noch keine Gruppen oder Forum-Themen registriert. `/gruppe` legt eins an.');
+    const zeilen = alle.slice(0, 25).map((g) => {
+      const titel = g.gebundenAn || g.themaName || g.titel || String(g.gruppenId);
+      const wo = g.titel ? ` (${g.titel})` : '';
+      const th = g.themen && g.themen.length ? `\n    Themen: ${g.themen.join(', ')}` : '';
+      return `• *${titel}*${wo}${th}`;
+    });
+    await sendeText(msg.chat.id, 'Ausgelagerte Fäden:\n' + zeilen.join('\n'));
+  });
+
+  // ─────────────────────────────────────────── Werkzeug-Registry / Zugang
+
+  adminBefehl(/^\/werkzeuge\b/i, async (msg) => {
+    const st = experten.registryStatus();
+    if (!st.vorhanden) {
+      return sendeText(msg.chat.id,
+        `Keine Registry gefunden.\nErwartet: \`${st.datei}\`\n\n` +
+        'Ohne die Datei laufen alle Experten wie bisher.');
+    }
+    const zeilen = st.eintraege.map((e) => {
+      const flag = e.aktiv ? '✅' : '⛔️';
+      const modul = e.hatModul === false ? '  ⚠️ kein Modul' : '';
+      const braucht = e.braucht && e.braucht.length ? `\n    braucht: ${e.braucht.join(', ')}` : '';
+      return `${flag} *${e.id}* — ${e.name}${modul}${braucht}`;
+    });
+    const ohne = st.ohneEintrag.length
+      ? `\n\n⚠️ Module ohne Registry-Eintrag (laufen mit, undokumentiert):\n${st.ohneEintrag.join(', ')}`
+      : '';
+    await sendeText(msg.chat.id,
+      `*Werkzeug-Registry*\n\`${st.datei}\`\n\n` + zeilen.join('\n') + ohne +
+      '\n\n_Ändern: Datei bearbeiten, Bot neu starten._');
+  });
+
+  adminBefehl(/^\/zugang(?:\s+(\S+))?\s*$/i, async (msg, m) => {
+    const arg = m && m[1] && m[1].trim();
+    if (arg && /^-?\d+$/.test(arg)) {
+      const weg = zugang.entziehe(arg);
+      schreibeEintrag('Zugang', `Entzogen: ${arg} durch ${msg.chat.id}`);
+      return sendeText(msg.chat.id, weg ? `Zugang für ${arg} entzogen.` : `${arg} stand nicht auf der Liste.`);
+    }
+    const liste = zugang.liste();
+    if (!zugang.aktiv()) {
+      return sendeText(msg.chat.id,
+        '⚠️ *Kein Zugangsschutz aktiv.*\nZum Aktivieren `ZUGANGS_CODE=...` in die .env eintragen und neu starten.');
+    }
+    if (!liste.length) return sendeText(msg.chat.id, 'Noch niemand freigeschaltet.');
+    await sendeText(msg.chat.id,
+      '*Freigeschaltete Chats:*\n' +
+      liste.map((e) => `• \`${e.chatId}\` ${e.name || ''} — seit ${(e.seit || '').slice(0, 10)}`).join('\n') +
+      '\n\n_Entziehen: /zugang <chatId>_');
+  });
+
+  // Der Lager-Bot schickt dem Monteur den Bescheid ueber DIESEN Bot — dort hat
+  // der Monteur seinen Chat, nicht im Lager-Bot. Die Auftragsstelle meldet hier
+  // ebenfalls herein, wenn der Laptop eine Bestellung abgearbeitet hat; deshalb
+  // nimmt der Kanal auch Dateien an (Screenshot vom fertigen Warenkorb).
+  benachrichtigung.registriere('hauptbot', async (chatId, text, extra) => {
+    const senden = () => rendere(chatId, { text, dateien: (extra && extra.dateien) || [] });
+    // Eine Bestellung kann in einem Forum-Thema ausgeloest worden sein. Die
+    // Rueckmeldung kommt Minuten spaeter und damit ausserhalb jeder laufenden
+    // Nachricht — ohne das mitgegebene Ziel landete sie in "Allgemein".
+    const thread = extra && extra.ziel && extra.ziel.message_thread_id;
+    return thread ? antwortZiel.run({ threadId: thread }, senden) : senden();
+  });
+
+  console.log(zugang.startHinweis());
   const cmdNamen = experten.alleCommands().map((c) => '/' + c.name);
   console.log(`Telegram-Adapter läuft. Experten-Befehle: ${cmdNamen.join(', ') || '(keine)'}`);
   return bot;

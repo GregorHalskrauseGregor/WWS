@@ -1,0 +1,23 @@
+# Geheimnisse gehören nicht ins Image — die .env wird zur Laufzeit gereicht.
+.env
+.env.*
+!.env.example
+
+node_modules
+.git
+.gitignore
+
+# Laufzeitdaten liegen im Volume, nicht im Image.
+data/
+screenshots/
+logs/
+*.log
+
+# Der Playwright-Dienst läuft auf dem Laptop, nicht auf der Box.
+grosshandel-service/
+
+# Arbeitsmaterial und Ablagen
+Kataloge Shops/
+Claude outputs/
+tests/
+docs/

@@ -1,0 +1,96 @@
+# WWS-Bot auf der Hetzner-Box.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# AUF DER BOX LÄUFT NOCH DER KALENDERBOT — DER WIRD HIER NICHT ANGEFASST
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Deshalb ist alles an diesem Stack eigen benannt und eigen abgelegt:
+#   • eigener Projektname      name: wws        (unten)
+#   • eigener Containername    wws-bot
+#   • eigenes Verzeichnis      /opt/wws
+#   • eigener Port             AGENT_PORT aus der .env, Standard 8788
+#
+# Damit greifen alle Befehle hier NUR auf diesen Stack. Trotzdem gilt:
+#
+#   ✅ docker compose up -d           startet nur wws
+#   ✅ docker compose restart         startet nur wws neu
+#   ✅ docker compose logs -f         zeigt nur wws
+#   ⛔️ docker stop $(docker ps -q)    würde den Kalenderbot mit abräumen
+#   ⛔️ docker system prune -a         löscht dessen Images gleich mit
+#
+# Immer aus /opt/wws heraus arbeiten, nie mit den nackten docker-Befehlen.
+
+name: wws
+
+services:
+  bot:
+    build: .
+    image: wws-bot:aktuell
+    container_name: wws-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Berlin
+      - WWS_DATA=/app/data
+      - WWS_WISSEN=/app/wissen
+      - WWS_WERKZEUGE=/app/werkzeuge.md
+    ports:
+      # Nur dieser eine Port wird nach außen geöffnet — hier holt der
+      # Laptop-Agent seine Aufträge ab. Ist 8788 auf der Box schon belegt,
+      # AGENT_PORT in der .env ändern; beide Seiten ziehen daraus.
+      - "${AGENT_PORT:-8788}:${AGENT_PORT:-8788}"
+    volumes:
+      # Nutzerdaten, Lagerdatei, Projektordner, Warteschlange. Liegt auf der
+      # Box, nicht im Image — ein Neubau des Images fasst das nicht an.
+      - ./data:/app/data
+      # Wissenskarten: der Bot schreibt hier auch hinein (/addKnowledge).
+      - ./wissen:/app/wissen
+      # Werkzeug-Registry: auf der Box bearbeiten, Container neu starten, fertig.
+      - ./werkzeuge.md:/app/werkzeuge.md:ro
+    mem_limit: 1g
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ══════════════════════════════════════════════════════════════════════════
+# OPTIONAL: HTTPS statt HTTP
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Ohne Domain läuft die Auftragsstelle als einfaches HTTP. Der Token geht dann
+# im Klartext über die Leitung — in einem fremden WLAN mitlesbar. Die
+# Großhändler-Zugangsdaten sind davon NICHT betroffen, die liegen auf dem
+# Laptop und verlassen ihn nie.
+#
+# Wer eine Domain auf die Box zeigen lässt (z. B. bot.deine-domain.de), holt
+# sich mit den folgenden Zeilen automatisches HTTPS. ACHTUNG: Caddy will Port
+# 80 und 443. Läuft dort schon etwas für den Kalenderbot, NICHT einschalten,
+# sondern erst klären — sonst steht der andere Dienst.
+#
+#   caddy:
+#     image: caddy:2-alpine
+#     container_name: wws-caddy
+#     restart: unless-stopped
+#     ports:
+#       - "80:80"
+#       - "443:443"
+#     volumes:
+#       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+#       - caddy-daten:/data
+#     depends_on:
+#       - bot
+#
+# volumes:
+#   caddy-daten:
+#
+# Caddyfile daneben anlegen:
+#
+#   bot.deine-domain.de {
+#       reverse_proxy bot:8788
+#   }
+#
+# Danach in der .env des Laptop-Agenten:
+#   AUFTRAGSSTELLE_URL=https://bot.deine-domain.de
