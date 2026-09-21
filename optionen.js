@@ -17,6 +17,7 @@
 // ist nichts passiert.
 
 const rollen = require('./rollen');
+const gruppen = require('./gruppen');
 
 const BEFEHLE_ROLLE = {
   zulagerist: 'lagerist',
@@ -48,6 +49,25 @@ function menue(chatId, { admin, geplanteRolle }) {
       (geplanteRolle && geplanteRolle !== jetzt ? '\n⚠️ _geändert, noch nicht gespeichert_' : ''),
     ''
   ];
+
+  // Gruppen sind nutzereigen: hier steht nur, was DIESEM Konto gehoert.
+  // Hinzufuegen kann der Bot sich nicht selbst — das laesst Telegram nicht zu.
+  // Also steht hier die Anleitung statt eines Knopfes, der nichts tun koennte.
+  const meineGruppen = gruppen.fuerBesitzer(chatId);
+  zeilen.push('*Deine Gruppen*');
+  if (meineGruppen.length) {
+    for (const g of meineGruppen.slice(0, 15)) {
+      zeilen.push(`• ${g.titel || g.gruppenId}`);
+    }
+    zeilen.push('', '_Was dort entsteht, liegt in deiner Ablage._');
+  } else {
+    zeilen.push('_noch keine_');
+  }
+  zeilen.push('',
+    'Neue Gruppe: öffne sie in Telegram, tipp auf den Gruppennamen,',
+    '*Mitglieder hinzufügen* — und füg mich hinzu.',
+    '_Wer mich hinzufügt, dem gehört die Gruppe._',
+    '', '/gruppen — Übersicht auch außerhalb der Einstellungen', '');
 
   if (admin) {
     zeilen.push('🔓 *Admin*', '', '*Rolle zuweisen*');

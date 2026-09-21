@@ -196,7 +196,15 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   }
 
   // Alles, was Kern und Experten an Außenwelt brauchen — mehr nicht.
-  function dienste(chatId) {
+  // ══════════════════════════════════════════════════════════════════════
+  // ABLAGE UND ANTWORTZIEL SIND NICHT DASSELBE
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Im Einzelchat fallen beide zusammen. In einer Gruppe nicht: verarbeitet
+  // wird unter dem Konto des BESITZERS — dort liegen seine Fäden, sein
+  // Gedächtnis, seine Vorgänge —, geantwortet wird aber in die GRUPPE.
+  // Deshalb wandert ab hier überall ein Paar durch: kontoId und ziel.
+  function dienste(kontoId, ziel = kontoId) {
     return {
       provider,
       routerChat,             // Faden- und Experten-Entscheidung
@@ -204,22 +212,22 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       antwortChat,            // freie Antworten
       lightChat: summaryChat, // Zusammenfassen, Gedächtnis
       protokoll: schreibeEintrag,
-      melde: (text) => sendeText(chatId, text),
-      frageBestaetigung: frageBestaetigung(chatId),
+      melde: (text) => sendeText(ziel, text),
+      frageBestaetigung: frageBestaetigung(ziel),
       // Wohin eine SPAETERE Antwort gehoert (Forum-Thema). Experten, die einen
       // Auftrag einstellen und erst Minuten danach melden, speichern das mit.
       antwortZiel: () => zielOpt()
     };
   }
 
-  async function verarbeite(chatId, eingabe) {
+  async function verarbeite(kontoId, eingabe, ziel = kontoId) {
     try {
-      const ergebnis = await orchestrator.verarbeiteNachricht({ chatId, ...eingabe }, dienste(chatId));
-      await rendere(chatId, ergebnis);
+      const ergebnis = await orchestrator.verarbeiteNachricht({ chatId: kontoId, ...eingabe }, dienste(kontoId, ziel));
+      await rendere(ziel, ergebnis);
     } catch (err) {
       console.error(err);
-      schreibeEintrag('Fehler', `Verarbeitung (${chatId}): ${err.message}`);
-      await sendeText(chatId, 'Fehler bei der Verarbeitung: ' + err.message);
+      schreibeEintrag('Fehler', `Verarbeitung (Konto ${kontoId}, Ziel ${ziel}): ${err.message}`);
+      await sendeText(ziel, 'Fehler bei der Verarbeitung: ' + err.message);
     }
   }
 
@@ -234,8 +242,40 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   // Solange ein exklusiver Modus laeuft, geht NICHTS anderes durch — weder
   // Befehle noch Text. Registriert wird deshalb ueber diesen Wrapper und nicht
   // direkt ueber bot.onText: sonst haette jeder neue Befehl die Sperre vergessen.
+  // In einer Gruppe funktionieren Befehle NICHT — mit genau einer Ausnahme.
+  //
+  // Der Grund ist nicht Bequemlichkeit: fast jeder Befehl schreibt oder liest
+  // unter msg.chat.id. In einer Gruppe waere das die Gruppen-ID und nicht das
+  // Konto des Besitzers — ein /projekt dort wuerde einen Projektordner unter
+  // einer Kennung anlegen, die keinem Menschen gehoert, und niemand faende ihn
+  // je wieder. Lieber ehrlich sagen, dass es im Einzelchat gehoert, als etwas
+  // an der falschen Stelle ablegen.
+  //
+  // Freier Text, Sprache, Fotos und Dateien laufen in der Gruppe normal — die
+  // gehen durch kontoFuer() und landen beim richtigen Konto.
+  const BEFEHLE_IN_GRUPPEN = new Set(['faden_hierher']);
+
+  function befehlsName(msg) {
+    const m = String((msg && msg.text) || '').match(/^\/([A-Za-z0-9_]+)/);
+    return m ? m[1].toLowerCase() : '';
+  }
+
   function befehl(muster, handler) {
     bot.onText(muster, (msg, m) => imThema(msg, async () => {
+      if (gruppen.istGruppe(msg)) {
+        const zugriff = await kontoFuer(msg);
+        if (!zugriff) return;
+        if (!BEFEHLE_IN_GRUPPEN.has(befehlsName(msg))) {
+          if (!merkeBehandelt(msg)) {
+            await sendeText(msg.chat.id,
+              'Befehle beantworte ich nur im Einzelchat mit mir — dort weiß ich sicher, ' +
+              'zu wessen Ablage das gehört.\n\nHier in der Gruppe schreib einfach normal ' +
+              'los: Text, Sprache, Fotos und Dateien verarbeite ich ganz normal.');
+          }
+          return;
+        }
+        return handler(msg, m);
+      }
       // Zugang zuerst: ohne Freischaltung geht KEIN Befehl durch.
       if (await gateFaengtAb(msg)) return;
       if (await modusFaengtAb(msg)) return;
@@ -279,6 +319,47 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     return true;
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // WEM GEHÖRT DIESE NACHRICHT?
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Einzelchat: dem Absender, Antwort geht an ihn zurück. Fertig.
+  //
+  // Gruppe: der Gruppe ist ein Konto zugeordnet — das des Menschen, der den
+  // Bot hinzugefügt hat. Unter DESSEN Konto wird gearbeitet. Reden darf jeder
+  // in der Gruppe, der freigeschaltet ist; alle anderen werden still
+  // übergangen. Im Gruppenchat nach dem Zugangscode zu fragen hieße, ihn vor
+  // allen Anwesenden auszusprechen — deshalb passiert das dort NIE.
+  //
+  // Rückgabe null heißt: diese Nachricht geht uns nichts an.
+  async function kontoFuer(msg) {
+    if (!gruppen.istGruppe(msg)) {
+      return { kontoId: msg.chat.id, ziel: msg.chat.id, inGruppe: false };
+    }
+
+    const gruppenId = msg.chat.id;
+    const besitzer = gruppen.besitzerVon(gruppenId);
+    if (!besitzer) {
+      // Entweder wurde der Bot hinzugefügt, bevor dieser Stand lief, oder
+      // Telegram hat den Einlader nicht mitgeliefert. Einmal sagen, dann Ruhe.
+      if (!merkeBehandelt(msg)) {
+        await sendeText(gruppenId,
+          '👋 Ich bin da, aber diese Gruppe ist noch keinem Konto zugeordnet.\n\n' +
+          'Damit ich weiß, unter wessen Daten ich hier arbeite: entfernt mich einmal ' +
+          'und fügt mich neu hinzu. Wer mich hinzufügt, dem gehört die Gruppe.');
+      }
+      return null;
+    }
+
+    const absender = msg.from && msg.from.id;
+    if (zugang.aktiv() && !zugang.istFreigeschaltet(absender)) {
+      schreibeEintrag('Zugang',
+        `Gruppe ${gruppenId}: ${absender} ist nicht freigeschaltet, Nachricht übergangen`);
+      return null;
+    }
+    return { kontoId: besitzer, ziel: gruppenId, inGruppe: true, absender };
+  }
+
   // Nachrichten aus einer Gruppe bekommen eine kurze Kontextzeile vorangestellt:
   // in welcher Gruppe, welchem Forum-Thema und worum es dort bisher ging. Der
   // Router und die Experten lesen das mit, ohne dass sie Telegram kennen muessen.
@@ -319,6 +400,8 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   // anzubieten.
   function adminBefehl(muster, handler) {
     bot.onText(muster, (msg, m) => imThema(msg, async () => {
+      // Wartungsbefehle gehoeren nie in eine Gruppe — dort liest jeder mit.
+      if (gruppen.istGruppe(msg)) return;
       const aktiv = modus.aktiv(msg.chat.id);
       if (aktiv && aktiv.art === 'options' && aktiv.daten.admin) return handler(msg, m);
       if (await modusFaengtAb(msg)) return;
@@ -328,45 +411,58 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   }
 
   bot.on('message', (msg) => imThema(msg, async () => {
-    const chatId = msg.chat.id;
+    const inGruppe = gruppen.istGruppe(msg);
 
-    // Zugang VOR allem anderen — auch vor dem Anlegen von Nutzerdaten. Fuer
-    // einen gesperrten Chat entsteht so kein einziger Ordner.
-    if (await gateFaengtAb(msg)) return;
+    // Im Einzelchat: Zugang VOR allem anderen, auch vor dem Anlegen von
+    // Nutzerdaten — fuer einen gesperrten Chat entsteht so kein einziger Ordner.
+    // In der Gruppe uebernimmt kontoFuer() die Pruefung, mit anderen Regeln.
+    if (!inGruppe && await gateFaengtAb(msg)) return;
 
-    let userState;
-    try {
-      userState = benutzer.initialisiereAusMessage(msg);
-    } catch (err) {
-      console.error('User-Initialisierung fehlgeschlagen:', err);
-      return;
+    const zugriff = await kontoFuer(msg);
+    if (!zugriff) return;
+    const chatId = zugriff.kontoId;   // hier liegen die Daten
+    const ziel = zugriff.ziel;        // hierhin geht die Antwort
+
+    // Nutzerakte nur im Einzelchat anlegen. Eine Gruppe ist kein Nutzer — ihre
+    // Nachrichten laufen ohnehin unter dem Konto des Besitzers, und das gibt es
+    // laengst, sonst haette er sich nie freischalten koennen.
+    if (!inGruppe) {
+      let userState;
+      try {
+        userState = benutzer.initialisiereAusMessage(msg);
+      } catch (err) {
+        console.error('User-Initialisierung fehlgeschlagen:', err);
+        return;
+      }
+      if (userState.warNeu) {
+        const name = userState.profil.displayName ? `, ${userState.profil.displayName}` : '';
+        await sendeText(chatId, `👋 Hallo${name}! Schreib einfach los — oder tipp /start für die Anleitung.`);
+        schreibeEintrag('Info', `Neuer User: ${userState.profil.chatId}`);
+      }
+
+      // Modus zuerst: eine Nachricht, die waehrend der Einstellungen
+      // hereinkommt, darf nicht nebenher verarbeitet werden. Der
+      // Einstellungsbereich ist ein Einzelchat-Ding — eine Gruppe haelt er
+      // nicht an, sonst legt ein offenes Menue die halbe Baustelle lahm.
+      if (await modusFaengtAb(msg)) return;
     }
-    if (userState.warNeu) {
-      const name = userState.profil.displayName ? `, ${userState.profil.displayName}` : '';
-      await sendeText(chatId, `👋 Hallo${name}! Schreib einfach los — oder tipp /start für die Anleitung.`);
-      schreibeEintrag('Info', `Neuer User: ${userState.profil.chatId}`);
-    }
-
-    // Modus zuerst: eine Nachricht, die waehrend der Einstellungen hereinkommt,
-    // darf nicht nebenher verarbeitet werden.
-    if (await modusFaengtAb(msg)) return;
 
     // Text
     if (msg.text) {
       if (msg.text.trim().startsWith('/')) return; // Commands laufen über onText
       const text = mitGruppenKontext(msg, msg.text.trim());
-      return mitTippt(chatId, () => verarbeite(chatId, { text }));
+      return mitTippt(ziel, () => verarbeite(chatId, { text }, ziel));
     }
 
     // Sprachnachricht: IMMER erst transkribieren, dann normal weiter.
     if (msg.voice || msg.audio) {
       const quelle = msg.voice || msg.audio;
       try {
-        await mitTippt(chatId, async () => {
+        await mitTippt(ziel, async () => {
           await sendeText(chatId, '🎙 Sprachnachricht wird transkribiert …');
           const text = await fachdienste.transkription(await ladeDatei(quelle.file_id), quelle.mime_type || 'audio/ogg');
           await sendeText(chatId, `Verstanden: „${text}"`);
-          await verarbeite(chatId, { text: mitGruppenKontext(msg, text) });
+          await verarbeite(chatId, { text: mitGruppenKontext(msg, text) }, ziel);
         });
       } catch (err) {
         schreibeEintrag('Fehler', `Sprachnachricht: ${err.message}`);
@@ -378,7 +474,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     // Foto
     if (msg.photo) {
       try {
-        await mitTippt(chatId, async () => {
+        await mitTippt(ziel, async () => {
           const bestes = msg.photo[msg.photo.length - 1];
           const buffer = await ladeDatei(bestes.file_id);
           const name = `foto-${Date.now()}.jpg`;
@@ -395,7 +491,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
             dokInhalt: inhalt,
             dokInfo: { name, mimeType: 'image/jpeg', size: buffer.length, pfad: null },
             datei: { buffer, name, mimeType: 'image/jpeg' }
-          });
+          }, ziel);
         });
       } catch (err) {
         schreibeEintrag('Fehler', `Foto: ${err.message}`);
@@ -407,7 +503,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     // Dokument
     if (msg.document) {
       try {
-        await mitTippt(chatId, async () => {
+        await mitTippt(ziel, async () => {
           const d = msg.document;
           const buffer = await ladeDatei(d.file_id);
           const name = d.file_name || `datei-${Date.now()}`;
@@ -436,7 +532,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
             dokInhalt: inhalt,
             dokInfo: { name, mimeType: mime, size: buffer.length, pfad: fs.existsSync(temp) ? temp : null },
             datei: { buffer, name, mimeType: mime }
-          });
+          }, ziel);
           try { fs.unlinkSync(temp); } catch { /* egal */ }
         });
       } catch (err) {
@@ -482,30 +578,100 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     return '';
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // WER DEN BOT HINZUFÜGT, DEM GEHÖRT DIE GRUPPE
+  // ════════════════════════════════════════════════════════════════════════
+  //
+  // Ein Bot kann sich in keine Gruppe einladen — das muss ein Mensch tun. Was
+  // Telegram dem Bot aber mitteilt: DASS er hinzugefügt wurde, und von WEM.
+  // Genau daran hängt der Besitz. Kein Kopplungscode, kein zweiter Schritt:
+  // hinzufügen genügt.
+  bot.on('my_chat_member', async (upd) => {
+    try {
+      const chat = (upd && upd.chat) || {};
+      if (chat.type !== 'group' && chat.type !== 'supergroup') return;
+
+      const status = upd.new_chat_member && upd.new_chat_member.status;
+      const einlader = upd.from || {};
+
+      // Rausgeworfen oder verlassen: Zuordnung mit aufräumen, sonst zeigt
+      // /einstellungen für immer eine Gruppe an, die es nicht mehr gibt.
+      if (status === 'left' || status === 'kicked') {
+        if (gruppen.loeseAb(chat.id)) {
+          schreibeEintrag('Gruppen', `Aus "${chat.title || chat.id}" entfernt, Zuordnung gelöscht`);
+        }
+        return;
+      }
+      if (status !== 'member' && status !== 'administrator') return;
+
+      // Schon zugeordnet? Dann nichts anfassen. Eine Statusänderung (Mitglied
+      // wird Admin) darf den Besitzer nicht stillschweigend austauschen.
+      const vorhanden = gruppen.besitzerVon(chat.id);
+      if (vorhanden) {
+        gruppen.registriereBesitzer(chat.id, vorhanden, chat.title);
+        return;
+      }
+
+      gruppen.registriereBesitzer(chat.id, einlader.id, chat.title);
+      schreibeEintrag('Gruppen',
+        `Gruppe "${chat.title || '?'}" (${chat.id}) gehört jetzt zu Konto ${einlader.id}`);
+
+      const name = einlader.first_name || einlader.username || 'dir';
+      await sendeText(chat.id,
+        `👋 Bin dabei. Diese Gruppe gehört ab jetzt zum Konto von *${name}*.\n\n` +
+        `Alles, was hier entsteht — Aufmaße, Bestellungen, Notizen — liegt in ${name}s ` +
+        'Ablage und ist auch im Einzelchat mit mir da. Und umgekehrt.\n\n' +
+        (zugang.aktiv()
+          ? 'Mitreden kann jeder hier, der mir einmal im Einzelchat den Zugangscode ' +
+            'geschickt hat. Wen ich nicht kenne, den überhöre ich — hier nach dem Code ' +
+            'zu fragen hieße, ihn vor allen auszusprechen.'
+          : '⚠️ Es ist kein Zugangscode gesetzt. Damit kann hier jeder mit mir arbeiten.'));
+    } catch (err) {
+      console.error('my_chat_member:', err.message);
+      schreibeEintrag('Fehler', `Gruppen-Zuordnung: ${err.message}`);
+    }
+  });
+
   // ──────────────────────────────────────────────────────────── Knopfdrücke
 
   bot.on('callback_query', (query) => imThema(query.message, async () => {
     const daten = query.data || '';
-    const chatId = query.message && query.message.chat.id;
+    const herkunft = (query.message && query.message.chat) || {};
+    const ausGruppe = herkunft.type === 'group' || herkunft.type === 'supergroup';
 
     // Das Zugangs-Gate galt bisher nur fuer Nachrichten und Befehle. Ein
     // Knopfdruck kam daran vorbei — wer eine weitergeleitete Nachricht mit
     // Knoepfen hat, konnte damit einen Vorgang bestaetigen, ohne je den Code
     // eingegeben zu haben. Eine Tuer neben der verschlossenen Tuer.
-    // WICHTIG: erst pruefen, ob der Zugangsschutz ueberhaupt scharf ist. Ohne
-    // gesetzten ZUGANGS_CODE ist NIEMAND "freigeschaltet" — eine Sperre allein
-    // auf istFreigeschaltet() haette dann saemtliche Knoepfe totgelegt.
-    if (chatId != null && zugang.aktiv() && !zugang.istFreigeschaltet(chatId)) {
+    // Geprueft wird, wer DRUECKT, nicht wo der Knopf haengt.
+    const druecker = (query.from && query.from.id) || null;
+    if (zugang.aktiv() && !zugang.istFreigeschaltet(druecker)) {
       bot.answerCallbackQuery(query.id, {
-        text: 'Dieser Chat ist nicht freigeschaltet. Schick dem Bot zuerst den Zugangscode.',
+        text: 'Du bist nicht freigeschaltet. Schick mir zuerst im Einzelchat den Zugangscode.',
         show_alert: true
       }).catch(() => {});
       return;
     }
+
+    // In einer Gruppe gehoert der Vorgang dem Konto des Besitzers — der Knopf
+    // muss denselben Vorgang treffen wie die Nachricht davor, sonst bestaetigt
+    // er ins Leere.
+    let chatId = herkunft.id;
+    let ziel = herkunft.id;
+    if (ausGruppe) {
+      const besitzer = gruppen.besitzerVon(herkunft.id);
+      if (!besitzer) {
+        bot.answerCallbackQuery(query.id, {
+          text: 'Diese Gruppe ist keinem Konto zugeordnet.', show_alert: true
+        }).catch(() => {});
+        return;
+      }
+      chatId = besitzer;
+    }
     const knoepfeWeg = () => {
       if (!query.message) return;
       bot.editMessageReplyMarkup({ inline_keyboard: [] },
-        { chat_id: chatId, message_id: query.message.message_id }).catch(() => {});
+        { chat_id: ziel, message_id: query.message.message_id }).catch(() => {});
     };
 
     if (daten.startsWith('tool_')) {
@@ -527,9 +693,9 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       bot.answerCallbackQuery(query.id).catch(() => {});
       const [aktion, themaId] = daten.split(':');
       const ergebnis = aktion === 'vorgang_ok'
-        ? await orchestrator.bestaetigeVorgang({ chatId, themaId }, dienste(chatId))
+        ? await orchestrator.bestaetigeVorgang({ chatId, themaId }, dienste(chatId, ziel))
         : await orchestrator.brichVorgangAb({ chatId, themaId });
-      await rendere(chatId, ergebnis);
+      await rendere(ziel, ergebnis);
       return;
     }
 
@@ -690,6 +856,18 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     });
   }
 
+  // Eine Anleitung, kein Knopf: ein Bot kann sich selbst in keine Gruppe
+  // einladen. Das ist keine fehlende Funktion, das laesst Telegram nicht zu.
+  function gruppenAnleitung(kurz) {
+    return (kurz ? '' : '👥 *Du hast noch keine Gruppe mit mir.*\n\n') +
+      '*So fügst du eine hinzu:*\n' +
+      '1. Gruppe in Telegram öffnen (oder neu anlegen)\n' +
+      '2. Gruppenname antippen → *Mitglieder hinzufügen*\n' +
+      '3. Mich suchen und hinzufügen\n\n' +
+      '_Wer mich hinzufügt, dem gehört die Gruppe._ Füg mich also selbst hinzu, ' +
+      'dann läuft alles unter deinem Konto.';
+  }
+
   // ─────────────────────────────────────────── Gruppen / Fäden auslagern
 
   // /gruppe [Name] — legt fuer den aktuellen Faden ein eigenes Forum-Thema an.
@@ -746,16 +924,22 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       'Nachricht, dass sie zu diesem Faden gehört.');
   });
 
+  // Nur DEINE Gruppen. Was andere mit dem Bot machen, geht dich nichts an —
+  // und umgekehrt.
   befehl(/^\/gruppen\b/i, async (msg) => {
-    const alle = gruppen.alle();
-    if (!alle.length) return sendeText(msg.chat.id, 'Noch keine Gruppen oder Forum-Themen registriert. `/gruppe` legt eins an.');
-    const zeilen = alle.slice(0, 25).map((g) => {
-      const titel = g.gebundenAn || g.themaName || g.titel || String(g.gruppenId);
-      const wo = g.titel ? ` (${g.titel})` : '';
-      const th = g.themen && g.themen.length ? `\n    Themen: ${g.themen.join(', ')}` : '';
-      return `• *${titel}*${wo}${th}`;
+    const chatId = msg.chat.id;
+    const meine = gruppen.fuerBesitzer(chatId);
+    if (!meine.length) {
+      return sendeText(chatId, gruppenAnleitung());
+    }
+    const zeilen = meine.slice(0, 25).map((g) => {
+      const seit = (g.angelegt || '').slice(0, 10);
+      return `• *${g.titel || g.gruppenId}*` + (seit ? `  _seit ${seit}_` : '');
     });
-    await sendeText(msg.chat.id, 'Ausgelagerte Fäden:\n' + zeilen.join('\n'));
+    await sendeText(chatId,
+      `👥 *Deine Gruppen* (${meine.length})\n` + zeilen.join('\n') +
+      '\n\nWas dort entsteht, liegt in deiner Ablage — du siehst es auch hier im ' +
+      'Einzelchat.\n\n' + gruppenAnleitung(true));
   });
 
   // ─────────────────────────────────────────── Werkzeug-Registry / Zugang
