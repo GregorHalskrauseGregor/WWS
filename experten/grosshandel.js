@@ -70,6 +70,81 @@ function positionenZeilen(positionen) {
   ).join('\n');
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// ERST IM LAGER NACHSEHEN
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Bestellen ist der zweite Schritt, nicht der erste. Was im eigenen Lager
+// liegt, muss niemand kaufen — und was dort liegt und trotzdem bestellt wird,
+// liegt hinterher doppelt herum und bindet Geld.
+//
+// Deshalb schaut der Experte vor jeder Bestellung in material.xlsx und legt
+// dem Monteur die Entscheidung vor: das Vorhandene vormerken und nur den Rest
+// bestellen, oder das Lager in Ruhe lassen und alles beim Händler holen.
+//
+// Entschieden wird NICHT automatisch. Es gibt gute Gründe für beides — das
+// Lagermaterial kann für eine andere Baustelle gedacht sein, oder es soll
+// alles aus einer Lieferung kommen. Diese Abwägung gehört dem Menschen.
+//
+// material.js wird bewusst erst hier geladen: es zieht exceljs nach, und die
+// meisten Nachrichten fassen die Lagerdatei nie an.
+async function pruefeLager(chatId, positionen) {
+  let material;
+  try { material = require('../material'); }
+  catch (err) { return { fehler: `Lagermodul nicht verfügbar: ${err.message}` }; }
+
+  let bestand;
+  try { bestand = await material.leseAlle(); }
+  catch (err) {
+    // Fehlende Lagerdatei ist kein Grund, die Bestellung zu verhindern —
+    // aber der Monteur soll wissen, dass nicht nachgesehen wurde.
+    return { fehler: err.message };
+  }
+
+  const befund = material.pruefeBedarf(positionen || [], bestand, chatId) || [];
+  const imLager = befund.filter((b) => b.treffer > 0 && b.verfuegbar > 0);
+  return { befund, imLager, geprueft: true };
+}
+
+// Was nach dem Reservieren noch beim Händler bestellt werden muss.
+function restNachLager(positionen, befund) {
+  const nachName = new Map((befund || []).map((b) => [String(b.bezeichnung).toLowerCase(), b]));
+  const rest = [];
+  const ausLager = [];
+  for (const p of positionen || []) {
+    const b = nachName.get(String(p.bezeichnung).toLowerCase());
+    const menge = Number(p.menge) || 0;
+    const ausDemLager = b ? Math.min(Number(b.verfuegbar) || 0, menge) : 0;
+    if (ausDemLager > 0) ausLager.push({ ...p, menge: ausDemLager });
+    const offen = menge - ausDemLager;
+    if (offen > 0) rest.push({ ...p, menge: offen });
+  }
+  return { rest, ausLager };
+}
+
+function lagerFrageText(grosshaendler, positionen, imLager, befund) {
+  const { rest, ausLager } = restNachLager(positionen, befund);
+  const zeilen = imLager.map((b) => {
+    const gebraucht = b.angefragt;
+    const da = Math.min(b.verfuegbar, gebraucht);
+    return `• *${b.bezeichnung}* — gebraucht ${gebraucht} ${b.einheit}, im Lager ${b.verfuegbar} verfügbar` +
+      (da < gebraucht ? `  _(deckt ${da}, es fehlen ${gebraucht - da})_` : '  _(deckt alles)_');
+  });
+  const nichtImLager = (positionen || []).length - ausLager.length;
+
+  return [
+    '📦 *Moment — das liegt teilweise schon im Lager.*',
+    '',
+    zeilen.join('\n'),
+    nichtImLager > 0 ? `\n_${nichtImLager} weitere Position(en) sind nicht im Lager._` : '',
+    '',
+    '*Was soll ich tun?*',
+    `• „reservieren" — ich merke das Vorhandene für dich vor und bestelle bei ${grosshaendler} ` +
+      `nur den Rest${rest.length ? ` (${rest.length} Position(en))` : ' — dann bleibt nichts zu bestellen'}`,
+    `• „alles bestellen" — das Lager bleibt unangetastet, ich bestelle die volle Menge bei ${grosshaendler}`
+  ].filter(Boolean).join('\n');
+}
+
 function baueJob(chatId, daten) {
   return {
     grosshaendler: String(daten.grosshaendler || '').toUpperCase(),
@@ -138,6 +213,13 @@ module.exports = {
     bemerkung: {
       typ: 'text?', label: 'Bemerkung',
       beschreibung: 'Anmerkung für den Großhändler (Lieferzeit, Ansprechpartner, ...)'
+    },
+    // Optional und wird NIE von sich aus abgefragt — nur dann gefüllt, wenn
+    // der Experte nach dem Lagerbefund zurückgefragt hat.
+    lagerweg: {
+      typ: 'text?', label: 'Umgang mit dem Lagerbestand',
+      beschreibung: 'genau "reservieren" (Lagerbestand vormerken, nur den Rest bestellen) ' +
+        'oder "alles" (Lager unangetastet lassen, volle Menge bestellen)'
     }
   },
 
@@ -151,7 +233,10 @@ module.exports = {
     '- Einheit nur wenn ungewöhnlich ("lfm", "m", "Stk.", "kg"). Standard weglassen.\n' +
     '- Typische Diktier-/OCR-Fehler still korrigieren ("Kupferorhr" -> "Kupferrohr").\n' +
     '- lieferadresse: Baustelle oder "Lager", falls genannt. Sonst leer lassen.\n' +
-    '- bemerkung: alles, was nicht in eine Position passt, aber für die Bestellung wichtig ist.',
+    '- bemerkung: alles, was nicht in eine Position passt, aber für die Bestellung wichtig ist.\n' +
+    '- lagerweg: NUR setzen, wenn der Nutzer auf die Lager-Rückfrage antwortet. ' +
+    '"reservieren", "aus dem Lager", "vormerken", "nimm das Lager" -> "reservieren". ' +
+    '"alles bestellen", "alles beim Händler", "Lager in Ruhe lassen", "komplett bestellen" -> "alles".',
 
   commands: [
     {
@@ -238,7 +323,91 @@ module.exports = {
       };
     }
 
-    const job = baueJob(chatId, daten);
+    // ══════════════════════════════════════════════════════════════════
+    // SCHRITT 1: IM LAGER NACHSEHEN
+    // ══════════════════════════════════════════════════════════════════
+    const weg = String(daten.lagerweg || '').toLowerCase();
+    const willReservieren = /reserv|vormerk|\blager\b/.test(weg);
+    const willAlles = /alles|komplett|h(ae|ä)ndler|voll/.test(weg);
+
+    let positionen = Array.isArray(daten.positionen) ? daten.positionen : [];
+    let lagerBericht = '';
+
+    if (!willReservieren && !willAlles) {
+      const l = await pruefeLager(chatId, positionen);
+
+      if (l.fehler) {
+        // Keine Lagerdatei ist kein Grund, die Bestellung zu blockieren — aber
+        // der Monteur soll wissen, dass nicht nachgesehen wurde.
+        lagerBericht = `\n\n_⚠️ Ins Lager konnte ich nicht schauen (${l.fehler}). ` +
+          'Bestellt wird die volle Menge._';
+        dienste.protokoll?.('Experte', `Grosshandel: Lagerpruefung fehlgeschlagen — ${l.fehler}`);
+      } else if (l.imLager.length) {
+        // Rückfrage. Der Vorgang bleibt offen, der Befund wird mitgespeichert,
+        // damit die Lagerdatei nicht ein zweites Mal gelesen werden muss.
+        dienste.protokoll?.('Experte',
+          `Grosshandel: ${l.imLager.length} von ${positionen.length} Position(en) im Lager — Rückfrage`);
+        return {
+          text: lagerFrageText(grosshaendler, positionen, l.imLager, l.befund),
+          vorgangEnde: false,
+          daten: { _lagerBefund: l.befund }
+        };
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // SCHRITT 2: AUS DEM LAGER VORMERKEN, WENN GEWÜNSCHT
+    // ══════════════════════════════════════════════════════════════════
+    if (willReservieren) {
+      const befund = Array.isArray(daten._lagerBefund)
+        ? daten._lagerBefund
+        : ((await pruefeLager(chatId, positionen)).befund || []);
+      const { rest, ausLager } = restNachLager(positionen, befund);
+
+      if (ausLager.length) {
+        try {
+          const material = require('../material');
+          // Pfad AUSDRUECKLICH mitgeben: reservierePositionen hat anders als
+          // leseAlle keinen Standardwert und laeuft sonst beim Speichern auf.
+          const erg = await material.reservierePositionen(ausLager, material.MATERIAL_PFAD, chatId);
+          const geklappt = erg.filter((e) => e.reserviert > 0);
+          const schiefgegangen = erg.filter((e) => e.unbekannt || e.nichtMoeglich > 0);
+
+          lagerBericht = '\n\n📦 *Aus dem Lager vorgemerkt:*\n' +
+            (geklappt.length
+              ? geklappt.map((e) => `• ${e.reserviert} ${e.einheit || ''} ${e.bezeichnung}`.replace(/\s+/g, ' ')).join('\n')
+              : '_nichts_') +
+            (schiefgegangen.length
+              ? '\n⚠️ Nicht vollständig: ' +
+                schiefgegangen.map((e) => `${e.bezeichnung} (${e.unbekannt ? 'nicht im Lager' : `${e.nichtMoeglich} zu viel`})`).join(', ')
+              : '');
+          dienste.protokoll?.('Experte',
+            `Grosshandel: ${geklappt.length} Position(en) im Lager reserviert (${chatId})`);
+        } catch (err) {
+          dienste.protokoll?.('Fehler', `Reservieren fehlgeschlagen: ${err.message}`);
+          return {
+            text: `📦 Das Vormerken im Lager ist fehlgeschlagen: ${err.message}\n\n` +
+              'Ich habe deshalb NICHTS bestellt — sonst wüsstest du nicht, was wo steht. ' +
+              'Die Bestellung liegt noch im Vorgang; sag „alles bestellen", wenn ich das ' +
+              'Lager übergehen soll.',
+            vorgangEnde: false
+          };
+        }
+      }
+
+      positionen = rest;
+      if (!positionen.length) {
+        return {
+          text: `📦 *Alles aus dem Lager gedeckt* — bei ${grosshaendler} ist nichts zu bestellen.` +
+            lagerBericht + '\n\n_Die Mengen sind für dich vorgemerkt._'
+        };
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // SCHRITT 3: DEN REST BESTELLEN
+    // ══════════════════════════════════════════════════════════════════
+    const job = baueJob(chatId, { ...daten, positionen });
     const kurz = `${grosshaendler}, ${job.positionen.length} Position(en)` +
       (job.kundentext ? ` — ${job.kundentext}` : '');
 
@@ -272,7 +441,8 @@ module.exports = {
             ? '🟢 Dein Laptop ist erreichbar — er fängt gleich an. Ich melde mich, sobald der Warenkorb steht.'
             : '🔴 Dein Laptop ist gerade nicht erreichbar. Der Auftrag bleibt liegen und läuft automatisch, ' +
               'sobald du ihn wieder anmachst. Ich melde mich dann.') +
-          `\n\n_Auftrag \`${auftrag.id}\` · Stand jederzeit mit /bestellungen_`
+          `\n\n_Auftrag \`${auftrag.id}\` · Stand jederzeit mit /bestellungen_` +
+          lagerBericht
       };
     }
 
@@ -304,7 +474,7 @@ module.exports = {
         `Positionen: ${job.positionen.length}`,
         b.bestellnummer ? `Auftragsnr.: ${b.bestellnummer}` : null,
         b.log ? `_${b.log}_` : null
-      ].filter(Boolean).join('\n'),
+      ].filter(Boolean).join('\n') + lagerBericht,
       dateien: b.screenshot ? [b.screenshot] : []
     };
   },

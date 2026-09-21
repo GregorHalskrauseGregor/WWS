@@ -544,6 +544,31 @@ async function fuehreAus({ experte, chatId, themaId, vorgang }, dienste) {
       { chatId, themaId, daten: vorgang.daten },
       dienste
     );
+
+    // Ein Experte darf am Schluss noch einmal zurueckfragen, statt blind
+    // auszufuehren. Gebraucht wird das, wenn sich erst beim Ausfuehren
+    // herausstellt, dass es etwas zu entscheiden gibt — etwa: die Haelfte des
+    // bestellten Materials liegt im Lager, soll ich das reservieren?
+    //
+    // Dann bleibt der Vorgang OFFEN. Die naechste Nachricht landet wieder beim
+    // selben Experten, statt einen neuen Vorgang anzufangen. Was der Experte in
+    // "daten" zurueckgibt, wird mitgespeichert — so muss er die Pruefung beim
+    // zweiten Durchgang nicht wiederholen.
+    if (ergebnis && ergebnis.vorgangEnde === false) {
+      vorgang.status = speicher.STATUS.SAMMELT;
+      if (ergebnis.daten && typeof ergebnis.daten === 'object') {
+        vorgang.daten = { ...vorgang.daten, ...ergebnis.daten };
+      }
+      speicher.speichere(chatId, themaId, vorgang);
+      return {
+        text: ergebnis.text || '',
+        dateien: ergebnis.dateien || [],
+        knoepfe: ergebnis.knoepfe || [],
+        vorgangEnde: false,
+        wartetAufEingabe: true
+      };
+    }
+
     speicher.loesche(chatId, themaId);
     return {
       text: ergebnis?.text || `${experte.name}: erledigt.`,
