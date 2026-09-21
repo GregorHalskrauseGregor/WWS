@@ -27,6 +27,12 @@ function schreibeEintrag(typ, nachricht) {
   const zeile = `[${zeitstempel()}] ${typ}: ${nachricht}\n`;
   fs.appendFileSync(PROTOKOLL_PATH, zeile);
   kuerzeBeiBedarf();
+
+  // Auch auf die Konsole. In einem Container ist das Log das, was
+  // "docker compose logs" zeigt — eine Datei IM Container sieht niemand.
+  // Genau daran ist eine Fehlersuche schon gescheitert: der Eintrag war da,
+  // nur unsichtbar an der Stelle, an der gesucht wurde.
+  console.log('· ' + zeile.trimEnd());
 }
 
 function leseLetzte(anzahl = 20) {

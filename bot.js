@@ -25,6 +25,7 @@
 require('dotenv').config();
 
 const fs = require('fs');
+const path = require('path');
 const { PFADE } = require('./config');
 const lagerAdapter = require('./adapter/telegram_lager');
 const { getProvider, uebersicht } = require('./providers');
@@ -34,6 +35,27 @@ const adapter = require('./adapter/telegram');
 const benachrichtigung = require('./benachrichtigung');
 const auftragsstelle = require('./kern/auftragsstelle');
 const agentHttp = require('./adapter/agent_http');
+
+// ══════════════════════════════════════════════════════════════════════════
+// NICHTS SOLL STILL STERBEN
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Ein Fehler in einem async-Handler, den niemand abfaengt, beendet unter Node
+// den ganzen Prozess — ohne Zeile im Log, die erklaert warum. Von aussen sieht
+// das aus, als haette der Bot einfach nicht reagiert: Docker startet ihn neu,
+// die Nachricht ist weg, und man sucht an der falschen Stelle.
+//
+// Deshalb wird hier alles mitgeschrieben, was sonst unbemerkt durchginge.
+process.on('unhandledRejection', (grund) => {
+  const text = (grund && (grund.stack || grund.message)) || String(grund);
+  console.error('\n⚠️  Unbehandelter Fehler in einem async-Aufruf:\n' + text + '\n');
+});
+process.on('uncaughtException', (err) => {
+  console.error('\n⚠️  Unbehandelte Ausnahme:\n' + (err && err.stack || err) + '\n');
+  // Bewusst KEIN process.exit: ein einzelner kaputter Handler soll nicht den
+  // ganzen Bot mitnehmen. Laeuft etwas grundsaetzlich schief, faellt es im Log
+  // auf, weil die Meldung dann im Sekundentakt kommt.
+});
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
@@ -70,6 +92,20 @@ const antwortChat = nurText(chatProvider);
 const routerChat = jsonText(getProvider('router'));
 const extraktionChat = jsonText(getProvider('extraktion'));
 const summaryChat = nurText(getProvider('summary'));
+
+// Welcher Stand laeuft hier eigentlich? In einem Container ist das sonst nicht
+// zu sehen — und die Frage "habe ich neu gebaut oder nicht?" hat schon mehr als
+// eine Fehlersuche in die Irre gefuehrt. Das Aenderungsdatum der Quelldateien
+// wandert beim Bauen mit ins Image und beantwortet sie zuverlaessig.
+try {
+  const juengste = ['bot.js', 'adapter/telegram.js', 'kern/router.js']
+    .map((f) => { try { return fs.statSync(path.join(__dirname, f)).mtime; } catch { return null; } })
+    .filter(Boolean)
+    .sort((a, b) => b - a)[0];
+  if (juengste) {
+    console.log(`Code-Stand: ${juengste.toISOString().slice(0, 16).replace('T', ' ')} (juengste Quelldatei)`);
+  }
+} catch { /* rein informativ */ }
 
 const geladen = experten.listeStatus();
 for (const r of uebersicht()) {
