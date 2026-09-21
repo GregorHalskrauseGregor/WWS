@@ -26,6 +26,7 @@ const kompressor = require('../kompressor');
 const benutzer = require('../benutzer');
 const zugang = require('../zugang');
 const gruppen = require('../gruppen');
+const raeume = require('../arbeitsraeume');
 const ratelimit = require('../ratelimit');
 const { schreibeEintrag, leseLetzte } = require('../protokoll');
 const fachdienste = require('../dienste');
@@ -49,8 +50,39 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   // hat, soll es beim naechsten Mal sofort sehen.
   // Die eigene ID, um in "X hat Y hinzugefuegt" zu erkennen, ob Y wir sind.
   let eigeneId = null;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PRIVACY MODE — die haeufigste Ursache fuer "der Bot schweigt in Gruppen"
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Telegram stellt einem Bot in Gruppen ab Werk NUR Befehle zu. Normale
+  // Nachrichten bekommt er gar nicht erst. Von aussen sieht das aus, als
+  // haette der Bot einen Fehler: /meine_gruppe kommt an, alles danach nicht.
+  //
+  // Man sieht das nirgends im Log, weil nichts ankommt — es gibt keinen
+  // Fehler, nur Stille. Deshalb fragt der Bot beim Start selbst nach und sagt
+  // es deutlich, statt jeden danach suchen zu lassen.
+  let darfAllesLesen = null;   // null = noch nicht bekannt
   bot.getMe()
-    .then((me) => { eigeneId = me && me.id; })
+    .then((me) => {
+      eigeneId = me && me.id;
+      darfAllesLesen = me && me.can_read_all_group_messages === true;
+      if (darfAllesLesen === false) {
+        console.warn(
+          '\n══════════════════════════════════════════════════════════════════\n' +
+          '  HINWEIS: In Gruppen sieht dieser Bot nur Befehle.\n' +
+          '\n' +
+          '  Telegrams "Group Privacy" ist eingeschaltet — normale Nachrichten\n' +
+          '  werden dem Bot in Gruppen nicht zugestellt. Er wirkt dort stumm.\n' +
+          '\n' +
+          '  Abstellen im @BotFather:\n' +
+          '    /mybots -> Bot waehlen -> Bot Settings -> Group Privacy -> Turn off\n' +
+          '\n' +
+          '  Danach den Bot einmal aus der Gruppe entfernen und neu hinzufuegen,\n' +
+          '  sonst greift die Aenderung dort nicht.\n' +
+          '══════════════════════════════════════════════════════════════════\n');
+      }
+    })
     .catch((err) => console.error('getMe fehlgeschlagen:', err.message));
 
   let konfliktZuletzt = 0;
@@ -226,10 +258,28 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     };
   }
 
-  async function verarbeite(kontoId, eingabe, ziel = kontoId) {
+  async function verarbeite(kontoId, eingabe, ziel = kontoId, ort = null) {
     try {
-      const ergebnis = await orchestrator.verarbeiteNachricht({ chatId: kontoId, ...eingabe }, dienste(kontoId, ziel));
+      // Der Arbeitsraum wird beim ersten Wort im Thema angelegt — leer. Was
+      // hier arbeitet, zieht gleich danach von selbst ein.
+      let raum = null;
+      if (ort) {
+        const name = (gruppen.info(ort.gruppenId, ort.threadId) || {}).themaName || null;
+        const r = raeume.sorgeFuerRaum(ort.gruppenId, ort.threadId, { name, konto: kontoId });
+        if (r) raum = { name: r.name, faeden: r.faeden || [] };
+      }
+
+      const ergebnis = await orchestrator.verarbeiteNachricht(
+        { chatId: kontoId, ...eingabe, raum }, dienste(kontoId, ziel));
       await rendere(ziel, ergebnis);
+
+      // Erst NACH der Verarbeitung: jetzt steht fest, in welchem Faden
+      // gearbeitet wurde. Ein Faden, der hier entsteht, gehört ab sofort zu
+      // diesem Arbeitsraum — er bleibt aber ganz normal dem Konto zugeordnet
+      // und ist überall sonst genauso erreichbar.
+      if (ort && ergebnis && ergebnis.themaId) {
+        raeume.fuegeHinzu(ort.gruppenId, ort.threadId, ergebnis.themaId);
+      }
     } catch (err) {
       console.error(err);
       schreibeEintrag('Fehler', `Verarbeitung (Konto ${kontoId}, Ziel ${ziel}): ${err.message}`);
@@ -259,7 +309,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   //
   // Freier Text, Sprache, Fotos und Dateien laufen in der Gruppe normal — die
   // gehen durch kontoFuer() und landen beim richtigen Konto.
-  const BEFEHLE_IN_GRUPPEN = new Set(['faden_hierher', 'meine_gruppe']);
+  const BEFEHLE_IN_GRUPPEN = new Set(['faden_hierher', 'meine_gruppe', 'add', 'raum', 'raus']);
 
   function befehlsName(msg) {
     const m = String((msg && msg.text) || '').match(/^\/([A-Za-z0-9_]+)/);
@@ -343,7 +393,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
   // Rückgabe null heißt: diese Nachricht geht uns nichts an.
   async function kontoFuer(msg) {
     if (!gruppen.istGruppe(msg)) {
-      return { kontoId: msg.chat.id, ziel: msg.chat.id, inGruppe: false };
+      return { kontoId: msg.chat.id, ziel: msg.chat.id, inGruppe: false, ort: null };
     }
 
     const gruppenId = msg.chat.id;
@@ -368,7 +418,14 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
         `Gruppe ${gruppenId}: ${absender} ist nicht freigeschaltet, Nachricht übergangen`);
       return null;
     }
-    return { kontoId: besitzer, ziel: gruppenId, inGruppe: true, absender };
+    // Der Ort des Arbeitsraums: Gruppe + Thema. Ohne Thema-ID (Allgemein-Thema
+    // einer Forumgruppe oder eine normale Gruppe ohne Themen) gibt es keinen
+    // Raum — dort sieht der Bot alles, was dem Konto gehört.
+    const threadId = (msg.is_topic_message && msg.message_thread_id) || null;
+    const ort = raeume.istRaumfaehig(gruppenId, threadId)
+      ? { gruppenId, threadId }
+      : null;
+    return { kontoId: besitzer, ziel: gruppenId, inGruppe: true, absender, ort };
   }
 
   // Nachrichten aus einer Gruppe bekommen eine kurze Kontextzeile vorangestellt:
@@ -484,7 +541,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
     if (msg.text) {
       if (msg.text.trim().startsWith('/')) return; // Commands laufen über onText
       const text = mitGruppenKontext(msg, msg.text.trim());
-      return mitTippt(ziel, () => verarbeite(chatId, { text }, ziel));
+      return mitTippt(ziel, () => verarbeite(chatId, { text }, ziel, zugriff.ort));
     }
 
     // Sprachnachricht: IMMER erst transkribieren, dann normal weiter.
@@ -495,7 +552,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
           await sendeText(chatId, '🎙 Sprachnachricht wird transkribiert …');
           const text = await fachdienste.transkription(await ladeDatei(quelle.file_id), quelle.mime_type || 'audio/ogg');
           await sendeText(chatId, `Verstanden: „${text}"`);
-          await verarbeite(chatId, { text: mitGruppenKontext(msg, text) }, ziel);
+          await verarbeite(chatId, { text: mitGruppenKontext(msg, text) }, ziel, zugriff.ort);
         });
       } catch (err) {
         schreibeEintrag('Fehler', `Sprachnachricht: ${err.message}`);
@@ -524,7 +581,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
             dokInhalt: inhalt,
             dokInfo: { name, mimeType: 'image/jpeg', size: buffer.length, pfad: null },
             datei: { buffer, name, mimeType: 'image/jpeg' }
-          }, ziel);
+          }, ziel, zugriff.ort);
         });
       } catch (err) {
         schreibeEintrag('Fehler', `Foto: ${err.message}`);
@@ -565,7 +622,7 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
             dokInhalt: inhalt,
             dokInfo: { name, mimeType: mime, size: buffer.length, pfad: fs.existsSync(temp) ? temp : null },
             datei: { buffer, name, mimeType: mime }
-          }, ziel);
+          }, ziel, zugriff.ort);
           try { fs.unlinkSync(temp); } catch { /* egal */ }
         });
       } catch (err) {
@@ -621,7 +678,14 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
         ? 'Mitreden kann jeder hier, der mir einmal im Einzelchat den Zugangscode ' +
           'geschickt hat. Wen ich nicht kenne, den überhöre ich — hier nach dem Code ' +
           'zu fragen hieße, ihn vor allen auszusprechen.'
-        : '⚠️ Es ist kein Zugangscode gesetzt. Damit kann hier jeder mit mir arbeiten.'));
+        : '⚠️ Es ist kein Zugangscode gesetzt. Damit kann hier jeder mit mir arbeiten.') +
+      (darfAllesLesen === false
+        ? '\n\n⚠️ *Noch eine Einstellung fehlt.* Telegram stellt mir hier gerade nur ' +
+          'Befehle zu — normale Nachrichten sehe ich nicht. Abstellen im @BotFather:\n' +
+          '`/mybots` → diesen Bot → *Bot Settings* → *Group Privacy* → *Turn off*\n\n' +
+          'Danach entfern mich einmal aus der Gruppe und füg mich neu hinzu, sonst ' +
+          'greift es hier nicht.'
+        : ''));
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -644,7 +708,12 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
       // /einstellungen für immer eine Gruppe an, die es nicht mehr gibt.
       if (status === 'left' || status === 'kicked') {
         if (gruppen.loeseAb(chat.id)) {
-          schreibeEintrag('Gruppen', `Aus "${chat.title || chat.id}" entfernt, Zuordnung gelöscht`);
+          // Die Räume gehen mit. Die FÄDEN bleiben — die gehören dem Konto,
+          // nicht dem Raum. Genau das ist der Unterschied.
+          const weg = raeume.entferneGruppe(chat.id);
+          schreibeEintrag('Gruppen',
+            `Aus "${chat.title || chat.id}" entfernt, Zuordnung gelöscht` +
+            (weg ? `, ${weg} Arbeitsraum/Arbeitsräume aufgelöst (Fäden bleiben)` : ''));
         }
         return;
       }
@@ -990,8 +1059,137 @@ function starte({ token, provider, antwortChat, routerChat, extraktionChat, summ
 
     gruppen.registriereBesitzer(gruppenId, wer.id, msg.chat.title);
     schreibeEintrag('Gruppen',
-      `Gruppe "${msg.chat.title || '?'}" (${gruppenId}) per /meine_gruppe an Konto ${wer.id}`);
+      `Gruppe "${msg.chat.title || '?'}" (${gruppenId}) per /meine_gruppe an Konto ${wer.id}` +
+      (darfAllesLesen === false ? ' — ACHTUNG: Group Privacy ist an, normale Nachrichten kommen nicht an' : ''));
     await begruesseInGruppe(msg.chat, wer);
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // ARBEITSRÄUME — /raum, /add, /raus
+  // ════════════════════════════════════════════════════════════════════════
+  //
+  // Ein Telegram-Thema ist ein Sichtfenster auf die eigenen Fäden, kein
+  // Behälter. Siehe arbeitsraeume.js. Deshalb heißt /add auch "dazuholen" und
+  // /raus "nicht mehr anzeigen" — gelöscht wird dabei nie etwas.
+
+  function fadenListe(kontoId, ids) {
+    const index = themen.ladeIndex(kontoId) || [];
+    const bekannt = new Map(index.map((t) => [t.id, t]));
+    return (ids || []).map((id) => bekannt.get(id)).filter(Boolean);
+  }
+
+  // Fäden des Kontos nach Namen suchen. Gibt eine Rangliste zurück, damit der
+  // Bot bei Mehrdeutigkeit fragen kann statt zu raten.
+  function sucheFaeden(kontoId, suchwort) {
+    const s = String(suchwort || '').toLowerCase().trim();
+    if (!s) return [];
+    const index = themen.ladeIndex(kontoId) || [];
+    const treffer = index.filter((t) => String(t.name || '').toLowerCase().includes(s));
+    return treffer.length ? treffer : index.filter((t) =>
+      s.split(/\s+/).filter((w) => w.length >= 3)
+        .some((w) => String(t.name || '').toLowerCase().includes(w)));
+  }
+
+  async function raumOderHinweis(msg) {
+    if (!gruppen.istGruppe(msg)) {
+      await sendeText(msg.chat.id,
+        'Arbeitsräume sind Telegram-*Themen* — das funktioniert nur in einer Gruppe, ' +
+        'in der Themen eingeschaltet sind.');
+      return null;
+    }
+    const zugriff = await kontoFuer(msg);
+    if (!zugriff) return null;
+    if (!zugriff.ort) {
+      await sendeText(zugriff.ziel,
+        'Hier gibt es keinen Arbeitsraum.\n\n' +
+        'Im Allgemein-Thema sehe ich alles, was zum Konto gehört — das ist Absicht. ' +
+        'Einen abgegrenzten Arbeitsraum bekommst du, indem du in dieser Gruppe ein ' +
+        '*eigenes Thema* anlegst und dort schreibst.');
+      return null;
+    }
+    return zugriff;
+  }
+
+  befehl(/^\/raum\b/i, async (msg) => {
+    const zugriff = await raumOderHinweis(msg);
+    if (!zugriff) return;
+    const { gruppenId, threadId } = zugriff.ort;
+    const name = (gruppen.info(gruppenId, threadId) || {}).themaName || null;
+    const r = raeume.sorgeFuerRaum(gruppenId, threadId, { name, konto: zugriff.kontoId });
+    const drin = fadenListe(zugriff.kontoId, r.faeden);
+
+    if (!drin.length) {
+      return sendeText(zugriff.ziel,
+        `🗂️ *Arbeitsraum ${r.name ? '„' + r.name + '"' : ''}*\n\n` +
+        'Hier liegt noch nichts. Fang einfach an — was hier entsteht, zieht von ' +
+        'selbst ein.\n\nEtwas Bestehendes dazuholen: `/add <Stichwort>`');
+    }
+    await sendeText(zugriff.ziel,
+      `🗂️ *Arbeitsraum ${r.name ? '„' + r.name + '"' : ''}* — ${drin.length} Faden/Fäden\n` +
+      drin.map((t) => `• ${t.name}` + (t.messageCount ? `  _(${t.messageCount} Nachrichten)_` : '')).join('\n') +
+      '\n\n_Nur diese sehe ich hier. Dazuholen: `/add <Stichwort>` · ' +
+      'Ausblenden: `/raus <Stichwort>`_');
+  });
+
+  befehl(/^\/add(?:\s+(.+))?\s*$/i, async (msg, m) => {
+    const zugriff = await raumOderHinweis(msg);
+    if (!zugriff) return;
+    const { gruppenId, threadId } = zugriff.ort;
+    const suchwort = (m && m[1] && m[1].trim()) || '';
+
+    const name = (gruppen.info(gruppenId, threadId) || {}).themaName || null;
+    const r = raeume.sorgeFuerRaum(gruppenId, threadId, { name, konto: zugriff.kontoId });
+
+    if (!suchwort) {
+      const index = (themen.ladeIndex(zugriff.kontoId) || []).slice(0, 10);
+      return sendeText(zugriff.ziel,
+        '`/add <Stichwort>` holt einen bestehenden Faden in diesen Arbeitsraum.\n\n' +
+        (index.length
+          ? 'Zuletzt bearbeitet:\n' + index.map((t) => `• ${t.name}`).join('\n')
+          : 'Du hast noch keine Fäden.'));
+    }
+
+    const treffer = sucheFaeden(zugriff.kontoId, suchwort);
+    if (!treffer.length) {
+      return sendeText(zugriff.ziel, `Keinen Faden gefunden, der zu „${suchwort}" passt.`);
+    }
+    if (treffer.length > 1) {
+      return sendeText(zugriff.ziel,
+        `Mehrere passen zu „${suchwort}" — welcher?\n` +
+        treffer.slice(0, 8).map((t) => `• \`/add ${t.name}\``).join('\n'));
+    }
+
+    const t = treffer[0];
+    if ((r.faeden || []).includes(t.id)) {
+      return sendeText(zugriff.ziel, `*${t.name}* ist hier schon drin.`);
+    }
+    raeume.fuegeHinzu(gruppenId, threadId, t.id);
+    schreibeEintrag('Arbeitsraum', `${gruppenId}:${threadId} + Faden ${t.id} (${t.name})`);
+    await sendeText(zugriff.ziel,
+      `🗂️ *${t.name}* ist jetzt in diesem Arbeitsraum.\n\n` +
+      '_Der Faden liegt weiterhin in deiner Ablage und ist auch im Einzelchat da — ' +
+      'er ist hier nur zusätzlich sichtbar._');
+  });
+
+  befehl(/^\/raus(?:\s+(.+))?\s*$/i, async (msg, m) => {
+    const zugriff = await raumOderHinweis(msg);
+    if (!zugriff) return;
+    const { gruppenId, threadId } = zugriff.ort;
+    const suchwort = (m && m[1] && m[1].trim()) || '';
+    if (!suchwort) return sendeText(zugriff.ziel, '`/raus <Stichwort>` blendet einen Faden hier aus. `/raum` zeigt, was drin ist.');
+
+    const r = raeume.finde(gruppenId, threadId);
+    const drin = fadenListe(zugriff.kontoId, r && r.faeden);
+    const treffer = drin.filter((t) => String(t.name || '').toLowerCase().includes(suchwort.toLowerCase()));
+    if (!treffer.length) return sendeText(zugriff.ziel, `„${suchwort}" ist hier nicht drin. \`/raum\` zeigt die Liste.`);
+    if (treffer.length > 1) {
+      return sendeText(zugriff.ziel, 'Mehrere passen — welcher?\n' +
+        treffer.slice(0, 8).map((t) => `• \`/raus ${t.name}\``).join('\n'));
+    }
+    raeume.nimmRaus(gruppenId, threadId, treffer[0].id);
+    await sendeText(zugriff.ziel,
+      `🗂️ *${treffer[0].name}* wird hier nicht mehr angezeigt.\n\n` +
+      '_Gelöscht ist nichts — der Faden liegt weiter in deiner Ablage._');
   });
 
   // Nur DEINE Gruppen. Was andere mit dem Bot machen, geht dich nichts an —

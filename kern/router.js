@@ -48,6 +48,15 @@ function findeExperteNachsichtig(liste, wert) {
   return liste.find((e) => normId(e.id) === ziel) || null;
 }
 
+// Einschraenkung auf einen Arbeitsraum. raumFaeden ist entweder null (kein
+// Raum, alles sichtbar) oder eine Liste von Faden-IDs — auch eine LEERE Liste
+// ist eine Aussage: frischer Arbeitsplatz, hier ist noch nichts.
+function nurAusRaum(index, raumFaeden) {
+  if (!Array.isArray(raumFaeden)) return index;
+  const erlaubt = new Set(raumFaeden);
+  return index.filter((t) => erlaubt.has(t.id));
+}
+
 function themenIndex(chatId) {
   try { return themen.ladeIndex(chatId); } catch { return []; }
 }
@@ -78,7 +87,7 @@ function ergebnis({ themaId, themaName, aktion, experte, dokTyp, hinweis, confid
 
 // ─────────────────────────────────────────────────────────────────── Prompts
 
-function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock, hatDatei, wissensBlock }) {
+function baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock, hatDatei, wissensBlock, raum }) {
   // Ohne angehaengte Datei duerfen die Datei-Aktionen gar nicht erst zur Wahl
   // stehen. Sonst antwortet der Bot auf eine reine Sprachnachricht mit
   // "Schick mir die Datei dazu" — und der gesprochene Inhalt ist verloren.
@@ -97,7 +106,14 @@ Du arbeitest strikt KI-basiert: keine Schluesselwoerter, keine Heuristik, keine 
 
 Antworte NUR mit einem JSON-Objekt. Kein Fliesstext, keine Erklaerung, kein Markdown.
 
-THEMEN (jüngstes zuerst):
+${raum ? `ARBEITSRAUM: „${raum.name || 'ohne Namen'}"
+Du arbeitest in einem abgegrenzten Arbeitsraum. UNTER "THEMEN" stehen
+ausschliesslich die Faeden, die hierher gehoeren — andere gibt es fuer dich
+gerade nicht. Passt die Nachricht zu keinem davon, ist es ein NEUER Faden
+("neu"), auch wenn es anderswo etwas Aehnliches geben koennte. Greif niemals
+auf einen Faden zurueck, der hier nicht aufgefuehrt ist.
+
+` : ''}THEMEN (jüngstes zuerst):
 ${themenBlock}
 
 EXPERTEN (jede:r ist ein klar abgegrenzter Verantwortungsbereich, lies die Beschreibung):
@@ -166,9 +182,13 @@ Experten: ${expertenBlock}
 {"thema":"<themaId oder neu>","themaName":"","aktion":"verarbeiten|konversation|nachfragen","experte":"<id oder null>","confidence":0.0}`;
 }
 
-function baueThemenBlock(chatId) {
-  const index = themenIndex(chatId);
-  if (index.length === 0) return '(noch keine — dies eröffnet das erste: thema="neu")';
+function baueThemenBlock(chatId, raumFaeden) {
+  const index = nurAusRaum(themenIndex(chatId), raumFaeden);
+  if (index.length === 0) {
+    return Array.isArray(raumFaeden)
+      ? '(in diesem Arbeitsraum liegt noch nichts — dies eröffnet das erste: thema="neu")'
+      : '(noch keine — dies eröffnet das erste: thema="neu")';
+  }
   const offen = new Map(vorgang.offeneVorgaenge(chatId).map((o) => [o.themaId, o]));
   return index.slice(0, 12).map((t) => {
     const o = offen.get(t.id);
@@ -177,10 +197,21 @@ function baueThemenBlock(chatId) {
   }).join('\n');
 }
 
-function baueVerlaufBlock(chatId) {
+function baueVerlaufBlock(chatId, raumFaeden) {
   let verlauf = [];
-  try { verlauf = themen.letzteNachrichten(chatId, SCHWELLEN.ROUTER_VERLAUF_ANZAHL) || []; }
-  catch { return ''; }
+  try {
+    if (Array.isArray(raumFaeden)) {
+      // Im Arbeitsraum zaehlt der juengste Faden DIESES Raums. Sonst zeigte
+      // der Verlauf auf eine Baustelle, von der hier gar nicht die Rede ist.
+      const index = nurAusRaum(themenIndex(chatId), raumFaeden);
+      if (!index.length) return '';
+      const thema = themen.ladeThema(chatId, index[0].id);
+      verlauf = (thema && Array.isArray(thema.messages))
+        ? thema.messages.slice(-SCHWELLEN.ROUTER_VERLAUF_ANZAHL) : [];
+    } else {
+      verlauf = themen.letzteNachrichten(chatId, SCHWELLEN.ROUTER_VERLAUF_ANZAHL) || [];
+    }
+  } catch { return ''; }
   if (verlauf.length === 0) return '';
   // Von hinten auffuellen: die juengsten Nachrichten muessen VOLLSTAENDIG
   // dastehen. Frueher wurde der fertige Block am Stueck abgeschnitten — dabei
@@ -199,7 +230,7 @@ function baueVerlaufBlock(chatId) {
   }
   if (!zeilen.length) return '';
   const text = (gekuerzt ? '(aeltere Nachrichten weggelassen)\n' : '') + zeilen.join('\n');
-  return `\nLETZTE NACHRICHTEN (jüngstes Thema):\n${text}\n`;
+  return `\nLETZTE NACHRICHTEN (jüngster Faden):\n${text}\n`;
 }
 
 // Vorschau + ein deterministisches Urteil, ob die Datei eine LEERE VORLAGE ist.
@@ -266,8 +297,13 @@ async function dateiVorschau(dokInfo) {
 
 // ────────────────────────────────────────────────────────────────── Entscheidung
 
-async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
-  const rueckfall = juengstesThemaId(chatId);
+async function entscheide({ text, dokInfo, chatId, chat, protokoll, raum }) {
+  // raum = { name, faeden: [themaId] } oder null. Siehe arbeitsraeume.js:
+  // ein Raum verkleinert nur die Sicht, er besitzt nichts.
+  const raumFaeden = raum && Array.isArray(raum.faeden) ? raum.faeden : null;
+  const rueckfall = raumFaeden
+    ? (nurAusRaum(themenIndex(chatId), raumFaeden)[0] || {}).id || null
+    : juengstesThemaId(chatId);
   const melde = (t) => protokoll && protokoll('Router', t);
 
   if (typeof chat !== 'function') {
@@ -279,7 +315,7 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
 
   const hatDatei = !!dokInfo;
   const liste = experten.implementierteExperten();
-  const themenBlock = baueThemenBlock(chatId);
+  const themenBlock = baueThemenBlock(chatId, raumFaeden);
   const expertenBlock = liste.length
     ? liste.map((e) => `- ${e.id} (${e.name}): ${e.zustaendigWenn}`).join('\n')
     : '(keine — nur "konversation" möglich)';
@@ -304,7 +340,7 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
   let parsed = null;
   try {
     parsed = extrahiere(await chat(
-      baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock: baueVerlaufBlock(chatId), hatDatei, wissensBlock: wissensbasis.katalog() }), eingabe));
+      baueSystemPrompt({ themenBlock, expertenBlock, verlaufBlock: baueVerlaufBlock(chatId, raumFaeden), hatDatei, wissensBlock: wissensbasis.katalog(), raum }), eingabe));
     if (!parsed) {
       melde('Erste Antwort ohne JSON — zweiter Versuch mit Kurz-Prompt.');
       parsed = extrahiere(await chat(baueKurzPrompt({ themenBlock, expertenBlock: liste.map((e) => e.id).join(', ') }), eingabe));
@@ -319,7 +355,7 @@ async function entscheide({ text, dokInfo, chatId, chat, protokoll }) {
   }
 
   const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0;
-  const bekannte = themenIndex(chatId).map((t) => t.id);
+  const bekannte = nurAusRaum(themenIndex(chatId), raumFaeden).map((t) => t.id);
   const themaRoh = String(parsed.thema || '').trim();
 
   // Thema bestimmen — neu nur auf ausdrücklichen Wunsch oder wenn es keines gibt.

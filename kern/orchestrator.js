@@ -334,7 +334,10 @@ async function starteWorkflowAusRouting(routing, params, dienste) {
 
 // ──────────────────────────────────────────────────────────── Hauptablauf
 
-async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = null, datei = null }, dienste) {
+// raum (optional) schraenkt ein, WELCHE Faeden der Router ueberhaupt sieht.
+// Der Kern weiss nicht, woher das kommt — der Adapter reicht eine fertige
+// Liste durch. Siehe arbeitsraeume.js: der Raum besitzt nichts, er filtert nur.
+async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = null, datei = null, raum = null }, dienste) {
   // 0) Limit vor allem anderen.
   const limit = ratelimit.pruefeNachricht(chatId);
   if (!limit.ok) {
@@ -353,6 +356,7 @@ async function verarbeiteNachricht({ chatId, text, dokInhalt = '', dokInfo = nul
 
   // 2) Router: ein oder mehrere Befehle erkennen.
   const routing = await router.entscheide({
+    raum,
     text, dokInfo, chatId, chat: dienste.routerChat, protokoll: dienste.protokoll
   });
   dienste.protokoll?.('Router',
